@@ -1,0 +1,23 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+*.tmp
+.idea/
+.vscode/
+launchSettings.json
+
+# Morpheus runtime state
+settings.local.json
+*.env
+secrets.json
+
+# Reference sources (kept locally for salvage, not shipped)
+reference/
+
+# MonoGame content build output
+Content/bin/
+Content/obj/

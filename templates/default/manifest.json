@@ -1,0 +1,8 @@
+{
+  "name": "Default",
+  "author": "morpheus",
+  "description": "Cyan HUD frames. UI_avatar wraps the avatar sprite; UI_message wraps the text readout.",
+  "avatarFrame": "UI_avatar.png",
+  "messageFrame": "UI_message.png",
+  "backgroundColor": "#000000"
+}
