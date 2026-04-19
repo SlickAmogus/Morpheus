@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"hi"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Smoke test reached morpheus. Hook pipeline is alive. If you hear this, TTS is wired. If you only see it, TTS key isn't configured yet — this is expected on a fresh install."}]}}
