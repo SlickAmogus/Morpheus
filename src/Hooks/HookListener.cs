@@ -13,6 +13,8 @@ public sealed class HookListener : IDisposable
     private HttpListener? _http;
     private CancellationTokenSource? _cts;
     private Task? _loop;
+    private CancellationTokenSource? _pollCts;
+    private readonly object _pollLock = new();
 
     public int Port { get; private set; }
     public string? BoundSessionId { get; private set; }
@@ -42,11 +44,14 @@ public sealed class HookListener : IDisposable
     public void Stop()
     {
         try { _cts?.Cancel(); } catch { }
+        try { _pollCts?.Cancel(); } catch { }
         try { _http?.Stop(); } catch { }
         try { _http?.Close(); } catch { }
         _http = null;
         _cts?.Dispose();
         _cts = null;
+        _pollCts?.Dispose();
+        _pollCts = null;
         _loop = null;
     }
 
@@ -103,17 +108,72 @@ public sealed class HookListener : IDisposable
         if (env is null) return;
         if (!LockOrIgnore(env.SessionId)) return;
 
-        ReadResult? read = null;
-        if (env.TranscriptPath is { Length: > 0 })
-            read = TranscriptReader.ReadLastAssistantMessage(env.TranscriptPath);
+        var sessionId = env.SessionId ?? "";
+        var transcriptPath = env.TranscriptPath;
+        var cwd = env.Cwd;
 
-        OnStop?.Invoke(new StopHookEvent
+        // Claude Code sometimes fires Stop before flushing the assistant record to the JSONL.
+        // Try now, then poll briefly. Cancel any previous poll (new turn supersedes the old one).
+        CancellationToken ct;
+        lock (_pollLock)
         {
-            SessionId = env.SessionId ?? "",
-            TranscriptPath = env.TranscriptPath,
-            AssistantMessage = read?.Text,
-            MessageUuid = read?.Uuid,
-            Cwd = env.Cwd,
+            _pollCts?.Cancel();
+            _pollCts = new CancellationTokenSource();
+            ct = _pollCts.Token;
+        }
+
+        var first = string.IsNullOrEmpty(transcriptPath) ? null
+            : TranscriptReader.ReadCurrentTurn(transcriptPath);
+        if (first is not null && !string.IsNullOrWhiteSpace(first.Text))
+        {
+            OnStop?.Invoke(new StopHookEvent
+            {
+                SessionId = sessionId,
+                TranscriptPath = transcriptPath,
+                AssistantMessage = first.Text,
+                MessageUuid = first.Uuid,
+                Cwd = cwd,
+            });
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            const int maxAttempts = 60;    // ~15s at 250ms per attempt
+            const int delayMs = 250;
+            string? finalUuid = first?.Uuid;
+
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                try { await Task.Delay(delayMs, ct); }
+                catch (OperationCanceledException) { return; }
+                if (ct.IsCancellationRequested || string.IsNullOrEmpty(transcriptPath)) return;
+
+                var r = TranscriptReader.ReadCurrentTurn(transcriptPath);
+                if (r is null) continue;
+                if (r.Uuid is { Length: > 0 }) finalUuid = r.Uuid;
+                if (string.IsNullOrWhiteSpace(r.Text)) continue;
+
+                OnStop?.Invoke(new StopHookEvent
+                {
+                    SessionId = sessionId,
+                    TranscriptPath = transcriptPath,
+                    AssistantMessage = r.Text,
+                    MessageUuid = r.Uuid,
+                    Cwd = cwd,
+                });
+                return;
+            }
+
+            // No text appeared in time — tell the game loop so status is accurate.
+            OnStop?.Invoke(new StopHookEvent
+            {
+                SessionId = sessionId,
+                TranscriptPath = transcriptPath,
+                AssistantMessage = null,
+                MessageUuid = finalUuid,
+                Cwd = cwd,
+            });
         });
     }
 
