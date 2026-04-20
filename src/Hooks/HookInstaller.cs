@@ -68,7 +68,7 @@ public static class HookInstaller
 
         arr.Add(new JsonObject
         {
-            ["matcher"] = eventName == "Stop" ? null : "",
+            ["matcher"] = "",
             ["hooks"] = new JsonArray
             {
                 new JsonObject
