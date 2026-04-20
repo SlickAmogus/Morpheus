@@ -200,11 +200,20 @@ public class MorpheusGame : Game
 
     private void TestSpeak()
     {
+        if (!string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)
+            && !string.IsNullOrWhiteSpace(_settings.ElevenLabsVoiceId))
+        {
+            const string line = "Morpheus online. Text to speech is wired.";
+            _currentSubtitle = line;
+            _ui.StatusLine = "synthesizing test line…";
+            _ = SynthesizeAndPlayAsync(line);
+            return;
+        }
         var clip = Path.Combine(AppContext.BaseDirectory, "assets", "test", "test_clip.mp3");
-        if (!File.Exists(clip)) { _ui.StatusLine = "test clip missing"; return; }
+        if (!File.Exists(clip)) { _ui.StatusLine = "no tts configured and no bundled clip"; return; }
         _player.PlayMp3(File.ReadAllBytes(clip));
         _currentSubtitle = "[test clip — bundled audio]";
-        _ui.StatusLine = "playing test clip";
+        _ui.StatusLine = "playing bundled clip (no ElevenLabs key in settings.local.json)";
     }
 
     private void InstallHooksForCwd()
