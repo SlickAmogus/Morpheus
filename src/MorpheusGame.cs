@@ -11,6 +11,7 @@ using Morpheus.Avatar;
 using Morpheus.Hooks;
 using Morpheus.Personality;
 using Morpheus.Ui;
+using Morpheus.Ui.Widgets;
 
 namespace Morpheus;
 
@@ -36,6 +37,9 @@ public class MorpheusGame : Game
     private readonly ConcurrentQueue<Action> _mainThread = new();
     private string _currentSubtitle = "";
     private KeyboardState _prevKeys;
+    private MouseState _prevMouse;
+    private string? _lastPlayedUuid;
+    private readonly VoicePanel _voicePanel = new();
 
     public MorpheusGame()
     {
@@ -102,6 +106,46 @@ public class MorpheusGame : Game
 
         ApplyAvatar();
         ApplyTemplate(templates);
+
+        _voicePanel.Layout(15, 145, 280);
+        _voicePanel.BindFromSettings(_settings);
+        _voicePanel.Save.Clicked += () =>
+        {
+            _voicePanel.WriteToSettings(_settings);
+            SaveSettings();
+            _ui.StatusLine = "voice settings saved";
+        };
+        _voicePanel.Preview.Clicked += () =>
+        {
+            _voicePanel.WriteToSettings(_settings);
+            SaveSettings();
+            TestSpeak();
+        };
+        _voicePanel.Voice.Changed += id =>
+        {
+            _settings.ElevenLabsVoiceId = id;
+            SaveSettings();
+        };
+
+        _ = LoadVoicesAsync();
+    }
+
+    private async System.Threading.Tasks.Task LoadVoicesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)) return;
+        try
+        {
+            var voices = await VoiceService.FetchAsync(_settings.ElevenLabsApiKey);
+            _mainThread.Enqueue(() =>
+            {
+                _voicePanel.PopulateVoices(voices, _settings.ElevenLabsVoiceId);
+                _ui.StatusLine = $"loaded {voices.Count} voices";
+            });
+        }
+        catch (Exception ex)
+        {
+            _mainThread.Enqueue(() => _ui.StatusLine = $"voice load failed: {ex.Message}");
+        }
     }
 
     protected override void Update(GameTime gameTime)
@@ -116,6 +160,10 @@ public class MorpheusGame : Game
         if (Pressed(k, Keys.F5)) TestSpeak();
         if (Pressed(k, Keys.F6)) InstallActivePersonality();
         _prevKeys = k;
+
+        var m = Mouse.GetState();
+        _voicePanel.Update(new WidgetInput { Mouse = m, PrevMouse = _prevMouse });
+        _prevMouse = m;
 
         _avatarState.MouthOpen = _player.IsPlaying
             && _player.CurrentLevel > (_ui.SelectedAvatar?.Manifest.LipsyncThreshold ?? 0.05f);
@@ -148,6 +196,9 @@ public class MorpheusGame : Game
         }
 
         _ui.Draw(_batch, _text, vp);
+
+        var panelRect = new Rectangle(10, 140, 290, 300);
+        _voicePanel.Draw(_batch, _text, _pixel, panelRect);
 
         _batch.End();
         base.Draw(gameTime);
@@ -228,6 +279,14 @@ public class MorpheusGame : Game
     private void OnAssistantMessage(StopHookEvent e)
     {
         if (string.IsNullOrWhiteSpace(e.AssistantMessage)) return;
+
+        if (e.MessageUuid is { Length: > 0 } uuid && uuid == _lastPlayedUuid)
+        {
+            _ui.StatusLine = "skipped duplicate stop event";
+            return;
+        }
+        _lastPlayedUuid = e.MessageUuid;
+
         _currentSubtitle = e.AssistantMessage;
         _avatarState.Emotion = "idle";
         _ui.StatusLine = "speaking…";
@@ -244,7 +303,14 @@ public class MorpheusGame : Game
     {
         try
         {
-            var tts = new ElevenLabsTts(_settings.ElevenLabsApiKey!);
+            var voiceSettings = new VoiceSettings
+            {
+                Stability = _settings.VoiceStability,
+                SimilarityBoost = _settings.VoiceSimilarity,
+                Style = _settings.VoiceStyle,
+                UseSpeakerBoost = _settings.VoiceSpeakerBoost,
+            };
+            var tts = new ElevenLabsTts(_settings.ElevenLabsApiKey!, voiceSettings);
             var mp3 = await tts.SynthesizeAsync(text, _settings.ElevenLabsVoiceId!);
             _mainThread.Enqueue(() => _player.PlayMp3(mp3));
         }

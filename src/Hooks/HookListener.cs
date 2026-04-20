@@ -103,15 +103,16 @@ public sealed class HookListener : IDisposable
         if (env is null) return;
         if (!LockOrIgnore(env.SessionId)) return;
 
-        string? text = null;
+        ReadResult? read = null;
         if (env.TranscriptPath is { Length: > 0 })
-            text = TranscriptReader.ReadLastAssistantText(env.TranscriptPath);
+            read = TranscriptReader.ReadLastAssistantMessage(env.TranscriptPath);
 
         OnStop?.Invoke(new StopHookEvent
         {
             SessionId = env.SessionId ?? "",
             TranscriptPath = env.TranscriptPath,
-            AssistantMessage = text,
+            AssistantMessage = read?.Text,
+            MessageUuid = read?.Uuid,
             Cwd = env.Cwd,
         });
     }

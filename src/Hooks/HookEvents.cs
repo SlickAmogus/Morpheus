@@ -19,6 +19,7 @@ public sealed class StopHookEvent
     public string SessionId { get; set; } = "";
     public string? TranscriptPath { get; set; }
     public string? AssistantMessage { get; set; }
+    public string? MessageUuid { get; set; }
     public string? Cwd { get; set; }
 }
 

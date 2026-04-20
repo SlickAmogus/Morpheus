@@ -11,6 +11,10 @@ public sealed class MorpheusSettings
     public string? ElevenLabsVoiceId { get; set; }
     public int HookPort { get; set; } = 47921;
     public string BackgroundColor { get; set; } = "#000000";
+    public float VoiceStability { get; set; } = 0.5f;
+    public float VoiceSimilarity { get; set; } = 0.75f;
+    public float VoiceStyle { get; set; } = 0.0f;
+    public bool VoiceSpeakerBoost { get; set; } = true;
 }
 
 public static class SettingsStore
