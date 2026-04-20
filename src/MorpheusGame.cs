@@ -68,6 +68,7 @@ public class MorpheusGame : Game
             _ui.BoundSessionId = sid;
             _ui.StatusLine = $"bound to session {Short(sid)}";
         });
+        _listener.OnPollTick += msg => _mainThread.Enqueue(() => _ui.StatusLine = msg);
         _player.Finished += () => _mainThread.Enqueue(() =>
         {
             _avatarState.MouthOpen = false;

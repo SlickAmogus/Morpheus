@@ -22,6 +22,7 @@ public sealed class HookListener : IDisposable
     public event Action<StopHookEvent>? OnStop;
     public event Action<ToolHookEvent>? OnTool;
     public event Action<string>? OnBindChanged; // fires when a new session locks on
+    public event Action<string>? OnPollTick;    // status message during polling
 
     public Task StartAsync(int port, CancellationToken ct = default)
     {
@@ -139,7 +140,7 @@ public sealed class HookListener : IDisposable
 
         _ = Task.Run(async () =>
         {
-            const int maxAttempts = 60;    // ~15s at 250ms per attempt
+            const int maxAttempts = 240;   // ~60s at 250ms per attempt
             const int delayMs = 250;
             string? finalUuid = first?.Uuid;
 
@@ -148,6 +149,9 @@ public sealed class HookListener : IDisposable
                 try { await Task.Delay(delayMs, ct); }
                 catch (OperationCanceledException) { return; }
                 if (ct.IsCancellationRequested || string.IsNullOrEmpty(transcriptPath)) return;
+
+                if (attempt % 8 == 0)
+                    OnPollTick?.Invoke($"waiting for transcript… {(attempt * delayMs) / 1000}s");
 
                 var r = TranscriptReader.ReadCurrentTurn(transcriptPath);
                 if (r is null) continue;
