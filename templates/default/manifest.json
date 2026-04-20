@@ -4,5 +4,9 @@
   "description": "Cyan HUD frames. UI_avatar wraps the avatar sprite; UI_message wraps the text readout.",
   "avatarFrame": "UI_avatar.png",
   "messageFrame": "UI_message.png",
-  "backgroundColor": "#000000"
+  "backgroundColor": "#000000",
+  "avatarInsets":  { "top": 30, "left": 30, "right": 30, "bottom": 30 },
+  "messageInsets": { "top": 30, "left": 60, "right": 60, "bottom": 30 },
+  "textSize": 16,
+  "lineHeight": 20
 }

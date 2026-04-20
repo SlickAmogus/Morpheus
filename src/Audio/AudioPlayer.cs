@@ -16,6 +16,27 @@ public sealed class AudioPlayer : IDisposable
     public bool IsPlaying { get; private set; }
     public event Action? Finished;
 
+    public double PositionSeconds
+    {
+        get { lock (_lock) return _reader?.CurrentTime.TotalSeconds ?? 0; }
+    }
+
+    public double TotalSeconds
+    {
+        get { lock (_lock) return _reader?.TotalTime.TotalSeconds ?? 0; }
+    }
+
+    public float Progress
+    {
+        get
+        {
+            var t = TotalSeconds;
+            if (t <= 0) return 0f;
+            var p = PositionSeconds / t;
+            return (float)System.Math.Clamp(p, 0.0, 1.0);
+        }
+    }
+
     public void PlayMp3(byte[] mp3Bytes)
     {
         lock (_lock)

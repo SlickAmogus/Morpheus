@@ -4,6 +4,14 @@ using System.Text.Json;
 
 namespace Morpheus.Ui;
 
+public sealed class Insets
+{
+    public int Top { get; set; }
+    public int Left { get; set; }
+    public int Right { get; set; }
+    public int Bottom { get; set; }
+}
+
 public sealed class TemplateManifest
 {
     public string Name { get; set; } = "";
@@ -12,6 +20,10 @@ public sealed class TemplateManifest
     public string? AvatarFrame { get; set; }
     public string? MessageFrame { get; set; }
     public string? BackgroundColor { get; set; }
+    public Insets? AvatarInsets { get; set; }
+    public Insets? MessageInsets { get; set; }
+    public int TextSize { get; set; } = 16;
+    public int LineHeight { get; set; } = 20;
 }
 
 public sealed class TemplateEntry

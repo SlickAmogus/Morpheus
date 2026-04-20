@@ -129,24 +129,87 @@ public class MorpheusGame : Game
         _batch.Begin(samplerState: SamplerState.LinearClamp);
 
         var vp = GraphicsDevice.Viewport.Bounds;
+        var tpl = _activeTemplate?.Manifest;
 
-        var avatarBox = new Rectangle(vp.Width / 2 - 200, 80, 400, 400);
+        var frameBox = new Rectangle(vp.Width / 2 - 200, 80, 400, 400);
+        var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
         _avatarRenderer.Draw(_batch, avatarBox, _avatarState);
-        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, avatarBox, Color.White);
+        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
 
         var msgBox = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
         if (_messageFrame is not null) _batch.Draw(_messageFrame, msgBox, Color.White);
 
         if (!string.IsNullOrEmpty(_currentSubtitle))
         {
-            var textBox = new Rectangle(msgBox.X + 30, msgBox.Y + 30, msgBox.Width - 60, msgBox.Height - 60);
-            _text.DrawString(_batch, Wrap(_currentSubtitle, textBox.Width), new Vector2(textBox.X, textBox.Y), Color.White, 16);
+            var textBox = Inset(msgBox, tpl?.MessageInsets);
+            int textSize = tpl?.TextSize > 0 ? tpl.TextSize : 16;
+            int lineHeight = tpl?.LineHeight > 0 ? tpl.LineHeight : 20;
+            DrawScrollingSubtitle(_currentSubtitle, textBox, textSize, lineHeight);
         }
 
         _ui.Draw(_batch, _text, vp);
 
         _batch.End();
         base.Draw(gameTime);
+    }
+
+    private static Rectangle Inset(Rectangle r, Insets? i)
+    {
+        if (i is null) return r;
+        return new Rectangle(
+            r.X + i.Left,
+            r.Y + i.Top,
+            System.Math.Max(0, r.Width - i.Left - i.Right),
+            System.Math.Max(0, r.Height - i.Top - i.Bottom));
+    }
+
+    private void DrawScrollingSubtitle(string text, Rectangle box, int textSize, int lineHeight)
+    {
+        var lines = WrapLines(text, box.Width, textSize);
+        int maxLines = System.Math.Max(1, box.Height / lineHeight);
+
+        int startLine = 0;
+        if (lines.Count > maxLines)
+        {
+            float progress = _player.IsPlaying && _player.TotalSeconds > 0.1 ? _player.Progress : 0f;
+            int overflow = lines.Count - maxLines;
+            startLine = (int)System.Math.Round(overflow * progress);
+            startLine = System.Math.Clamp(startLine, 0, overflow);
+        }
+
+        for (int i = 0; i < maxLines && startLine + i < lines.Count; i++)
+        {
+            _text.DrawString(_batch, lines[startLine + i],
+                new Vector2(box.X, box.Y + i * lineHeight), Color.White, textSize);
+        }
+    }
+
+    private List<string> WrapLines(string text, int pixelWidth, int size)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(text)) return result;
+
+        foreach (var paragraph in text.Split('\n'))
+        {
+            if (paragraph.Length == 0) { result.Add(""); continue; }
+            var words = paragraph.Split(' ');
+            var line = new System.Text.StringBuilder();
+            foreach (var w in words)
+            {
+                var candidate = line.Length == 0 ? w : line + " " + w;
+                if (_text.Measure(candidate, size).X > pixelWidth && line.Length > 0)
+                {
+                    result.Add(line.ToString());
+                    line.Clear().Append(w);
+                }
+                else
+                {
+                    line.Clear().Append(candidate);
+                }
+            }
+            if (line.Length > 0) result.Add(line.ToString());
+        }
+        return result;
     }
 
     protected override void UnloadContent()
@@ -315,23 +378,4 @@ public class MorpheusGame : Game
         return r;
     }
 
-    private string Wrap(string text, int pixelWidth)
-    {
-        if (string.IsNullOrEmpty(text)) return text;
-        var words = text.Split(' ');
-        var sb = new System.Text.StringBuilder();
-        var line = new System.Text.StringBuilder();
-        foreach (var w in words)
-        {
-            var candidate = line.Length == 0 ? w : line + " " + w;
-            if (_text.Measure(candidate, 16).X > pixelWidth && line.Length > 0)
-            {
-                sb.AppendLine(line.ToString());
-                line.Clear().Append(w);
-            }
-            else line.Clear().Append(candidate);
-        }
-        if (line.Length > 0) sb.Append(line);
-        return sb.ToString();
-    }
 }
