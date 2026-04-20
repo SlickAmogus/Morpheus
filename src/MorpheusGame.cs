@@ -179,7 +179,7 @@ public class MorpheusGame : Game
         var vp = GraphicsDevice.Viewport.Bounds;
         var tpl = _activeTemplate?.Manifest;
 
-        var frameBox = new Rectangle(vp.Width / 2 - 200, 80, 400, 400);
+        var frameBox = new Rectangle(vp.Width / 2 - 140, 80, 400, 400);
         var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
         _avatarRenderer.Draw(_batch, avatarBox, _avatarState);
         if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);

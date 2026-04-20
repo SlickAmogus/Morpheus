@@ -10,7 +10,7 @@ namespace Morpheus.Ui;
 // Left sidebar: voice picker + ElevenLabs voice_settings controls.
 public sealed class VoicePanel
 {
-    public Dropdown Voice { get; } = new() { Label = "voice" };
+    public Dropdown Voice { get; } = new() { Label = "" };
     public Slider Stability { get; } = new() { Label = "stability" };
     public Slider Similarity { get; } = new() { Label = "similarity" };
     public Slider Style { get; } = new() { Label = "style" };
