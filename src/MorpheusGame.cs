@@ -278,16 +278,27 @@ public class MorpheusGame : Game
 
     private void OnAssistantMessage(StopHookEvent e)
     {
-        if (string.IsNullOrWhiteSpace(e.AssistantMessage)) return;
-
         if (e.MessageUuid is { Length: > 0 } uuid && uuid == _lastPlayedUuid)
         {
-            _ui.StatusLine = "skipped duplicate stop event";
+            if (!string.IsNullOrWhiteSpace(e.AssistantMessage))
+                _ui.StatusLine = "same turn — skipped";
             return;
         }
+
+        if (string.IsNullOrWhiteSpace(e.AssistantMessage))
+        {
+            _ui.StatusLine = "turn had no text (tool-only)";
+            _lastPlayedUuid = e.MessageUuid;
+            return;
+        }
+
         _lastPlayedUuid = e.MessageUuid;
 
-        _currentSubtitle = e.AssistantMessage;
+        const int hardCap = 4800; // ElevenLabs per-request limit is 5000
+        var text = e.AssistantMessage!;
+        if (text.Length > hardCap) text = text[..hardCap] + "…";
+
+        _currentSubtitle = text;
         _avatarState.Emotion = "idle";
         _ui.StatusLine = "speaking…";
 
@@ -295,7 +306,7 @@ public class MorpheusGame : Game
         if (!string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)
             && !string.IsNullOrWhiteSpace(_settings.ElevenLabsVoiceId))
         {
-            _ = SynthesizeAndPlayAsync(e.AssistantMessage!);
+            _ = SynthesizeAndPlayAsync(text);
         }
     }
 
