@@ -1,25 +1,32 @@
 # Morpheus
 
-Avatar frontend for Claude Code. Morpheus speaks Claude Code's non-code output aloud, animates a 2D avatar while it talks, and switches expressions in response to tool-use events — giving one specific Claude Code session a face and a voice.
+An animated avatar frontend for Claude Code. Morpheus displays a customizable animated avatar that responds to your code work with expressions, emotions, and synthesized voice—giving your Claude Code session a face and personality.
 
-Status: **early scaffolding**. Skeleton compiles, no wired features yet.
+## Features
 
-## What it does (when complete)
+- **Animated Avatars** — WebP and PNG sprite-based avatars with emotion states and lipsync
+- **Claude Code Integration** — Hooks into Claude Code via HTTP to display responses with avatar expressions in real-time
+- **Text-to-Speech** — ElevenLabs voice synthesis with customizable voice and speaker settings
+- **Session History** — Persistent transcripts with pagination and search
+- **Personality System** — Custom avatar personalities with emotion-tagged responses
+- **Template System** — Swappable UI frames and layouts
+- **Voice Customization** — Custom and shared ElevenLabs voices
 
-- Binds to one chosen Claude Code session via hooks (Stop + PreToolUse + PostToolUse).
-- Synthesizes the assistant's text output with TTS (ElevenLabs by default, API key user-supplied).
-- Plays audio through NAudio, drives mouth open/closed frames from playback amplitude.
-- Switches expression based on tool-use events (e.g. `Bash` → tool_bash sprite, `Read/Grep` → thinking, ...).
-- Shows a text box with the message currently being spoken.
-- Lets you pick avatars from a dropdown — each avatar is a folder under `avatars/` with a sprite manifest and optional personality file (Claude Code output style).
-- Lets you pick UI skins ("templates") the same way from `templates/`.
-- Both avatars and templates can be shipped as zip files; morpheus extracts them on launch.
+## What it does
 
-## What it does not do
+- Binds to a Claude Code session via HTTP hooks (Stop + Tool events)
+- Reads assistant messages and synthesizes them with TTS (ElevenLabs)
+- Plays audio via NAudio with mouth-open/closed lipsync from playback amplitude
+- Switches avatar expressions based on emotion tags (`[emotion: happy]`, etc.)
+- Displays transcripts with message history and navigation
+- Supports swappable avatars and UI templates from `avatars/` and `templates/` folders
+- Manages voice settings and custom voice library
 
-- Does not run its own LLM. All text comes from Claude Code.
-- Does not do speech-to-text. Use Claude Code's input side (your OS dictation, etc.).
-- Does not inject commands into your Claude Code session. You activate personalities via `/config → Output style` yourself, after morpheus installs the file.
+## What it doesn't do (yet)
+
+- Does not run its own LLM — all text comes from Claude Code
+- Does not do speech-to-text input (use Claude Code's native input)
+- Does not directly inject text into Claude Code (you control the session)
 
 ## Requirements
 
@@ -60,4 +67,4 @@ Metal Gear Solid is © Konami; no copyrighted assets ship in this repository.
 
 ## License
 
-TBD.
+MIT License — see LICENSE file for details.

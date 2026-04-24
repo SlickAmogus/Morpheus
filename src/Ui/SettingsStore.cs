@@ -1,7 +1,14 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
 namespace Morpheus.Ui;
+
+public sealed class CustomVoice
+{
+    public string Name { get; set; } = "";
+    public string VoiceId { get; set; } = "";
+}
 
 public sealed class MorpheusSettings
 {
@@ -15,6 +22,7 @@ public sealed class MorpheusSettings
     public float VoiceSimilarity { get; set; } = 0.75f;
     public float VoiceStyle { get; set; } = 0.0f;
     public bool VoiceSpeakerBoost { get; set; } = true;
+    public List<CustomVoice> CustomVoices { get; set; } = new();
 }
 
 public static class SettingsStore

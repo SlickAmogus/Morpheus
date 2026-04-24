@@ -17,18 +17,21 @@ public sealed class VoicePanel
     public Toggle SpeakerBoost { get; } = new() { Label = "speaker boost" };
     public Button Save { get; } = new() { Label = "save" };
     public Button Preview { get; } = new() { Label = "preview" };
+    public Button Refresh { get; } = new() { Label = "refresh" };
 
     private readonly List<Widget> _widgets;
 
     public VoicePanel()
     {
-        _widgets = new List<Widget> { Voice, Stability, Similarity, Style, SpeakerBoost, Preview, Save };
+        _widgets = new List<Widget> { Voice, Refresh, Stability, Similarity, Style, SpeakerBoost, Preview, Save };
     }
 
     public void Layout(int x, int y, int width)
     {
         int cursor = y + 16;
-        Voice.Bounds = new Rectangle(x, cursor, width, 30);             cursor += 46;
+        int refreshW = 70;
+        Voice.Bounds   = new Rectangle(x, cursor, width - refreshW - 6, 30);
+        Refresh.Bounds = new Rectangle(x + width - refreshW, cursor, refreshW, 30); cursor += 46;
         Stability.Bounds = new Rectangle(x, cursor, width, 34);         cursor += 44;
         Similarity.Bounds = new Rectangle(x, cursor, width, 34);        cursor += 44;
         Style.Bounds = new Rectangle(x, cursor, width, 34);             cursor += 44;

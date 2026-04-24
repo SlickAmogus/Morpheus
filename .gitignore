@@ -15,8 +15,16 @@ settings.local.json
 *.env
 secrets.json
 
-# Reference sources (kept locally for salvage, not shipped)
+# Reference sources and local testing
 reference/
+screenshot/
+TestWebp/
+.claude/
+
+# Avatar/template copies and non-default variants
+avatars/*\ -\ Copy/
+avatars/trucy/
+avatars/trucy\ -\ Copy/
 
 # MonoGame content build output
 Content/bin/

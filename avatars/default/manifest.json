@@ -4,6 +4,7 @@
   "description": "Placeholder avatar. Solid-color squares for idle open/closed + generic fallback. Swap these PNGs (or copy this folder) to author your own avatar.",
   "fps": 8,
   "lipsyncThreshold": 0.05,
+  "transparentColor": "#FFFFFF", 
   "sprites": {
     "idle": {
       "closed": "idle_closed.png",

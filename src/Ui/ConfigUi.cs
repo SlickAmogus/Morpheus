@@ -67,8 +67,9 @@ public sealed class ConfigUi
             pad.Y += lh;
         }
 
-        pad.Y = viewport.Height - 60f;
+        pad.X = 14f;
+        pad.Y = viewport.Height - 18f;
         text.DrawString(batch, "F1 bind   F2 avatar   F3 template   F5 test   F6 install personality   Esc quit",
-            pad, new Color(150, 150, 150), 14);
+            pad, new Color(150, 150, 150), 12);
     }
 }

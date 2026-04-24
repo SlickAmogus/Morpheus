@@ -140,7 +140,7 @@ public sealed class HookListener : IDisposable
 
         _ = Task.Run(async () =>
         {
-            const int maxAttempts = 240;   // ~60s at 250ms per attempt
+            const int maxAttempts = 1200;  // ~5 min at 250ms per attempt
             const int delayMs = 250;
             string? finalUuid = first?.Uuid;
 
@@ -194,6 +194,25 @@ public sealed class HookListener : IDisposable
             ToolName = env.ToolName ?? "",
             Cwd = env.Cwd,
         });
+
+        // PreToolUse is the only intra-turn flush point: any assistant text emitted
+        // before this tool call has usually landed in the JSONL by now. Read once
+        // and fire a Stop event so the game loop can speak the new suffix mid-turn.
+        if (phase == "pre" && !string.IsNullOrEmpty(env.TranscriptPath))
+        {
+            var r = TranscriptReader.ReadCurrentTurn(env.TranscriptPath);
+            if (r is not null && !string.IsNullOrWhiteSpace(r.Text))
+            {
+                OnStop?.Invoke(new StopHookEvent
+                {
+                    SessionId = env.SessionId ?? "",
+                    TranscriptPath = env.TranscriptPath,
+                    AssistantMessage = r.Text,
+                    MessageUuid = r.Uuid,
+                    Cwd = env.Cwd,
+                });
+            }
+        }
     }
 
     private bool LockOrIgnore(string? sessionId)
