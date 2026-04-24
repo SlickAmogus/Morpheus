@@ -15,6 +15,8 @@ public sealed class HookListener : IDisposable
     private Task? _loop;
     private CancellationTokenSource? _pollCts;
     private readonly object _pollLock = new();
+    private DateTime _lastActivityTime = DateTime.UtcNow;
+    private const double SessionTimeoutSeconds = 30.0; // auto-rebind after 30s inactivity
 
     public int Port { get; private set; }
     public string? BoundSessionId { get; private set; }
@@ -218,13 +220,30 @@ public sealed class HookListener : IDisposable
     private bool LockOrIgnore(string? sessionId)
     {
         if (string.IsNullOrEmpty(sessionId)) return false;
+
+        _lastActivityTime = DateTime.UtcNow;
+
         if (BoundSessionId is null)
         {
             BoundSessionId = sessionId;
             OnBindChanged?.Invoke(sessionId);
             return true;
         }
-        return BoundSessionId == sessionId;
+
+        // Check if bound session has timed out — allow rebinding to new session
+        if (BoundSessionId != sessionId)
+        {
+            var timeSinceLastActivity = (DateTime.UtcNow - _lastActivityTime).TotalSeconds;
+            if (timeSinceLastActivity > SessionTimeoutSeconds)
+            {
+                BoundSessionId = sessionId;
+                OnBindChanged?.Invoke(sessionId);
+                return true;
+            }
+            return false; // still bound to old session
+        }
+
+        return true; // same session
     }
 
     private static HookEnvelope? Parse(string body)

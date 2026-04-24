@@ -42,8 +42,6 @@ public class MorpheusGame : Game
     private MouseState _prevMouse;
     private string? _currentTurnUuid;
     private int _spokenLen;
-    private int _emotionStripChars;     // chars chopped from raw fullText (the [emotion:X] tag)
-    private bool _emotionParsedThisTurn;
     private readonly Queue<string> _speechQueue = new();
     private bool _speechActive;
     private static readonly System.Text.RegularExpressions.Regex EmotionTagRegex =
@@ -587,51 +585,11 @@ public class MorpheusGame : Game
         {
             _currentTurnUuid = uuid;
             _spokenLen = 0;
-            _emotionStripChars = 0;
-            _emotionParsedThisTurn = false;
             _avatarRenderer.RerollVariant();
         }
 
-        // Try to extract leading [emotion: X] tag.
-        // - If the text starts with `[` but the regex hasn't matched yet AND we
-        //   haven't seen enough chars, defer the chunk so we never speak the tag.
-        if (!_emotionParsedThisTurn)
-        {
-            if (fullText.TrimStart().StartsWith('['))
-            {
-                var m = EmotionTagRegex.Match(fullText);
-                if (m.Success)
-                {
-                    var emotion = m.Groups[1].Value.ToLowerInvariant();
-                    var availableEmotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions;
-                    if (emotion == "idle"
-                        || (availableEmotions is not null && availableEmotions.ContainsKey(emotion)))
-                    {
-                        _avatarState.Emotion = emotion;
-                    }
-                    _emotionStripChars = m.Length;
-                    _emotionParsedThisTurn = true;
-                }
-                else if (fullText.Length < 60)
-                {
-                    // tag still streaming in; wait for more before speaking
-                    return;
-                }
-                else
-                {
-                    // text starts with `[` but it's not our tag — give up parsing
-                    _emotionParsedThisTurn = true;
-                }
-            }
-            else
-            {
-                _emotionParsedThisTurn = true;
-            }
-        }
-
-        var effectiveText = _emotionStripChars > 0 && fullText.Length >= _emotionStripChars
-            ? fullText[_emotionStripChars..]
-            : fullText;
+        // Strip and process all emotion tags, both leading and mid-message
+        var effectiveText = StripEmotionTags(fullText);
 
         if (effectiveText.Length <= _spokenLen && !newTurn) return;
 
@@ -639,7 +597,6 @@ public class MorpheusGame : Game
         _spokenLen = effectiveText.Length;
 
         // Persist to live session and refresh the view if we're following live.
-        // Save the cleaned text (sans emotion tag).
         bool wasOnLast = _messageView.IsOnLastPage;
         bool pageAdded = _liveSession.AppendOrUpdate(uuid, effectiveText);
         SessionStore.Save(_liveSession);
@@ -653,11 +610,39 @@ public class MorpheusGame : Game
             if (pageAdded) RefreshSessionsDropdown();
         }
 
-        // Only force idle if we did NOT pull an emotion from the [emotion:X] tag.
-        if (_emotionStripChars == 0) _avatarState.Emotion = "idle";
         _ui.StatusLine = "speaking…";
 
         if (!string.IsNullOrEmpty(chunk)) EnqueueSpeech(chunk);
+    }
+
+    private string StripEmotionTags(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        var result = new System.Text.StringBuilder();
+        var emotionRegex = new System.Text.RegularExpressions.Regex(@"\[emotion:\s*(\w+)\s*\]",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        int lastPos = 0;
+        foreach (System.Text.RegularExpressions.Match match in emotionRegex.Matches(text))
+        {
+            // Add text before the tag
+            result.Append(text, lastPos, match.Index - lastPos);
+
+            // Apply emotion change
+            var emotion = match.Groups[1].Value.ToLowerInvariant();
+            var availableEmotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions;
+            if (emotion == "idle" || (availableEmotions is not null && availableEmotions.ContainsKey(emotion)))
+            {
+                _avatarState.Emotion = emotion;
+            }
+
+            lastPos = match.Index + match.Length;
+        }
+
+        // Add remaining text after last tag
+        result.Append(text, lastPos, text.Length - lastPos);
+        return result.ToString();
     }
 
     private void EnqueueSpeech(string text)
@@ -666,10 +651,27 @@ public class MorpheusGame : Game
             || string.IsNullOrWhiteSpace(_settings.ElevenLabsVoiceId))
             return;
 
-        const int hardCap = 4800; // ElevenLabs per-request limit is 5000
-        if (text.Length > hardCap) text = text[..hardCap] + "…";
+        const int hardCap = 4980; // ElevenLabs per-request limit is 5000, leave 20 char buffer
+        if (text.Length > hardCap)
+        {
+            // Try to break at a sentence boundary before the limit
+            int breakPoint = hardCap;
+            int lastPeriod = text.LastIndexOf('.', Math.Min(hardCap - 1, text.Length - 1));
+            if (lastPeriod > hardCap * 0.75) breakPoint = lastPeriod + 1;
 
-        _speechQueue.Enqueue(text);
+            var chunk = text[..breakPoint].TrimEnd();
+            _speechQueue.Enqueue(chunk);
+
+            // Queue remainder for next cycle if there's more
+            var remainder = text[breakPoint..].TrimStart();
+            if (!string.IsNullOrEmpty(remainder))
+                _speechQueue.Enqueue(remainder);
+        }
+        else
+        {
+            _speechQueue.Enqueue(text);
+        }
+
         if (!_speechActive) StartNextSpeech();
     }
 
