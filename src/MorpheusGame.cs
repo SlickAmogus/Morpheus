@@ -305,6 +305,7 @@ public class MorpheusGame : Game
         _gameSeconds += dt;
         _avatarRenderer.Update(dt);
         _bgRenderer.Update(dt);
+        _bgRenderer.UpdateDiagonal(dt);
 
         var vp = GraphicsDevice.Viewport.Bounds;
         LayoutForFrame(vp);
@@ -498,14 +499,19 @@ public class MorpheusGame : Game
         var frameBox = new Rectangle(ax, ay, aw, ah);
         var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
 
-        // Avatar box background grid (brighter, tighter)
+        // Layer 1: black fill for avatar box
+        _batch.Draw(_pixel, frameBox, Color.Black);
+
+        // Layer 2: diagonal grid (ends batch, draws 3D, restarts batch)
         _batch.End();
-        _bgRenderer.Draw(frameBox, new Color(0, 210, 255));
+        _bgRenderer.DrawDiagonal(frameBox, new Color(0, 210, 255));
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
-        // Draw frame overlay before avatar so avatar renders on top
-        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
+        // Layer 3: avatar webp/png
         _avatarRenderer.Draw(_batch, avatarBox, _avatarState);
+
+        // Layer 4: UI frame overlay on top of avatar
+        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
 
         var msgBox = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
         if (_messageFrame is not null) _batch.Draw(_messageFrame, msgBox, Color.White);

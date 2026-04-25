@@ -153,6 +153,82 @@ public sealed class BackgroundRenderer : IDisposable
         _brightness[i] = (float)(_rng.NextDouble() * 0.6 + 0.4);
     }
 
+    // Draws a 2D diagonal scrolling grid over a screen-space rectangle.
+    // Lines run at 45 degrees, scrolling toward bottom-right.
+    private VertexPositionColor[] _diagVerts = Array.Empty<VertexPositionColor>();
+    private double _diagOffset;
+    private const float DiagSpacing = 32f; // pixels between diagonal lines
+    private const float DiagSpeed   = 18f; // pixels per second
+
+    public void UpdateDiagonal(double deltaSeconds)
+    {
+        _diagOffset = (_diagOffset + deltaSeconds * DiagSpeed) % DiagSpacing;
+    }
+
+    public void DrawDiagonal(Rectangle target, Color tint)
+    {
+        if (_effect is null || _device is null) return;
+        if (target.Width <= 0 || target.Height <= 0) return;
+
+        // Build lines in screen-space pixel coords, then project with orthographic
+        // Number of lines: enough to cover width+height with spacing
+        int lineCount = (int)((target.Width + target.Height) / DiagSpacing) + 2;
+        int needed = lineCount * 2 * 2; // *2 for each direction (/ and \), *2 verts
+        if (_diagVerts.Length != needed)
+            _diagVerts = new VertexPositionColor[needed];
+
+        float offset = (float)_diagOffset;
+        int v = 0;
+        float w = target.Width;
+        float h = target.Height;
+        var col = Tinted(tint, 0.25f);
+
+        for (int i = 0; i < lineCount; i++)
+        {
+            float t = -h + i * DiagSpacing + offset;
+            // Lines going top-left → bottom-right (positive diagonal)
+            // Start on top edge or left edge, end on bottom or right
+            float x0 = t, y0 = 0f;
+            float x1 = t + h, y1 = h;
+            // Clip to [0,w] x [0,h]
+            if (x0 < 0) { y0 -= x0; x0 = 0; }
+            if (x1 > w) { y1 -= (x1 - w); x1 = w; }
+
+            _diagVerts[v++] = new VertexPositionColor(
+                ScreenToNdc(target.X + x0, target.Y + y0, target), col);
+            _diagVerts[v++] = new VertexPositionColor(
+                ScreenToNdc(target.X + x1, target.Y + y1, target), col);
+        }
+
+        var saved = _device.Viewport;
+        _device.Viewport = new Viewport(target);
+        _effect.View       = Matrix.Identity;
+        _effect.Projection = Matrix.Identity;
+        _effect.World      = Matrix.Identity;
+
+        _device.BlendState        = BlendState.Additive;
+        _device.DepthStencilState = DepthStencilState.None;
+
+        foreach (var pass in _effect.CurrentTechnique.Passes)
+        {
+            pass.Apply();
+            if (v >= 2)
+                _device.DrawUserPrimitives(PrimitiveType.LineList, _diagVerts, 0, v / 2);
+        }
+
+        _device.BlendState        = BlendState.AlphaBlend;
+        _device.DepthStencilState = DepthStencilState.Default;
+        _device.Viewport          = saved;
+    }
+
+    // Maps a screen pixel within `rect` to NDC [-1, 1]
+    private static Vector3 ScreenToNdc(float sx, float sy, Rectangle rect)
+    {
+        float nx = (sx - rect.X) / rect.Width  * 2f - 1f;
+        float ny = 1f - (sy - rect.Y) / rect.Height * 2f;
+        return new Vector3(nx, ny, 0f);
+    }
+
     public void Dispose()
     {
         _effect?.Dispose();
