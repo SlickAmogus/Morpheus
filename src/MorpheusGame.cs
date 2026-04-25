@@ -736,7 +736,8 @@ public class MorpheusGame : Game
                 UseSpeakerBoost = _settings.VoiceSpeakerBoost,
             };
             var tts = new ElevenLabsTts(_settings.ElevenLabsApiKey!, voiceSettings);
-            var mp3 = await tts.SynthesizeAsync(text, _settings.ElevenLabsVoiceId!);
+            // Prepend a soft pause to prevent ElevenLabs from clipping the first word
+            var mp3 = await tts.SynthesizeAsync("… " + text, _settings.ElevenLabsVoiceId!);
             _mainThread.Enqueue(() => _player.PlayMp3(mp3));
         }
         catch (Exception ex)
