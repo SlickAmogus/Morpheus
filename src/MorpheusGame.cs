@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -588,13 +589,17 @@ public class MorpheusGame : Game
             _avatarRenderer.RerollVariant();
         }
 
-        // Strip and process all emotion tags, both leading and mid-message
-        var effectiveText = StripEmotionTags(fullText);
+        // Parse emotion tags and create (emotion, text) segments for real-time emotion switching
+        var segments = ParseEmotionSegments(fullText);
+
+        // Build the full clean text (without emotion tags) for session storage
+        var effectiveText = string.Concat(segments.Select(s => s.Text));
 
         if (effectiveText.Length <= _spokenLen && !newTurn) return;
 
-        var chunk = effectiveText.Length > _spokenLen ? effectiveText[_spokenLen..] : string.Empty;
-        _spokenLen = effectiveText.Length;
+        var newTextLen = effectiveText.Length;
+        var chunkStartPos = _spokenLen;
+        _spokenLen = newTextLen;
 
         // Persist to live session and refresh the view if we're following live.
         bool wasOnLast = _messageView.IsOnLastPage;
@@ -612,37 +617,76 @@ public class MorpheusGame : Game
 
         _ui.StatusLine = "speaking…";
 
-        if (!string.IsNullOrEmpty(chunk)) EnqueueSpeech(chunk);
+        // Queue speech segments with emotion changes
+        int currentPos = 0;
+        foreach (var segment in segments)
+        {
+            // Only queue text that's new (after _spokenLen position)
+            if (currentPos >= chunkStartPos)
+            {
+                if (segment.Emotion is not null)
+                    _avatarState.Emotion = segment.Emotion;
+                if (!string.IsNullOrEmpty(segment.Text))
+                    EnqueueSpeech(segment.Text);
+            }
+            else if (currentPos + segment.Text.Length > chunkStartPos)
+            {
+                // Partial segment — only queue the new part
+                int skipChars = chunkStartPos - currentPos;
+                var newPart = segment.Text[skipChars..];
+                if (segment.Emotion is not null)
+                    _avatarState.Emotion = segment.Emotion;
+                if (!string.IsNullOrEmpty(newPart))
+                    EnqueueSpeech(newPart);
+            }
+            currentPos += segment.Text.Length;
+        }
     }
 
-    private string StripEmotionTags(string text)
+    private record EmotionSegment(string? Emotion, string Text);
+
+    private List<EmotionSegment> ParseEmotionSegments(string text)
     {
-        if (string.IsNullOrEmpty(text)) return text;
+        var segments = new List<EmotionSegment>();
+        if (string.IsNullOrEmpty(text))
+            return segments;
 
-        var result = new System.Text.StringBuilder();
         var emotionRegex = new System.Text.RegularExpressions.Regex(@"\[emotion:\s*(\w+)\s*\]",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+        string? currentEmotion = null;
         int lastPos = 0;
+
         foreach (System.Text.RegularExpressions.Match match in emotionRegex.Matches(text))
         {
-            // Add text before the tag
-            result.Append(text, lastPos, match.Index - lastPos);
+            // Add text before this tag (if any) with current emotion
+            if (match.Index > lastPos)
+            {
+                var textBefore = text[lastPos..match.Index];
+                if (!string.IsNullOrEmpty(textBefore))
+                    segments.Add(new EmotionSegment(currentEmotion, textBefore));
+            }
 
-            // Apply emotion change
+            // Validate and set new emotion
             var emotion = match.Groups[1].Value.ToLowerInvariant();
             var availableEmotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions;
             if (emotion == "idle" || (availableEmotions is not null && availableEmotions.ContainsKey(emotion)))
             {
-                _avatarState.Emotion = emotion;
+                currentEmotion = emotion;
             }
 
             lastPos = match.Index + match.Length;
         }
 
         // Add remaining text after last tag
-        result.Append(text, lastPos, text.Length - lastPos);
-        return result.ToString();
+        if (lastPos < text.Length)
+        {
+            var textRemaining = text[lastPos..];
+            if (!string.IsNullOrEmpty(textRemaining))
+                segments.Add(new EmotionSegment(currentEmotion, textRemaining));
+        }
+
+        return segments;
     }
 
     private void EnqueueSpeech(string text)
