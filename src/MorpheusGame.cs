@@ -46,7 +46,7 @@ public class MorpheusGame : Game
     private readonly Queue<string> _speechQueue = new();
     private bool _speechActive;
     private static readonly System.Text.RegularExpressions.Regex EmotionTagRegex =
-        new(@"^\s*\[emotion:\s*(\w+)\s*\]\s*",
+        new(@"\[emotion:\s*(\w+)\s*\]",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase
           | System.Text.RegularExpressions.RegexOptions.Compiled);
     private readonly VoicePanel _voicePanel = new();
@@ -651,13 +651,10 @@ public class MorpheusGame : Game
         if (string.IsNullOrEmpty(text))
             return segments;
 
-        var emotionRegex = new System.Text.RegularExpressions.Regex(@"\[emotion:\s*(\w+)\s*\]",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
         string? currentEmotion = null;
         int lastPos = 0;
 
-        foreach (System.Text.RegularExpressions.Match match in emotionRegex.Matches(text))
+        foreach (System.Text.RegularExpressions.Match match in EmotionTagRegex.Matches(text))
         {
             // Add text before this tag (if any) with current emotion
             if (match.Index > lastPos)

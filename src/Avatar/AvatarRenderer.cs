@@ -25,6 +25,8 @@ public sealed class AvatarRenderer : IDisposable
     private readonly Dictionary<string, Texture2D[]> _frames = new(StringComparer.OrdinalIgnoreCase);
     // Per-frame duration in seconds (only set for WebP — PNG sequences use manifest FPS).
     private readonly Dictionary<string, double[]> _frameDurations = new(StringComparer.OrdinalIgnoreCase);
+    // Cached total duration per WebP (sum of _frameDurations[key]).
+    private readonly Dictionary<string, double> _frameDurationTotals = new(StringComparer.OrdinalIgnoreCase);
     private AvatarEntry? _entry;
     private GraphicsDevice? _device;
 
@@ -142,19 +144,15 @@ public sealed class AvatarRenderer : IDisposable
         {
             double clock = _blinkBase is not null ? _blinkElapsed : _animElapsed;
             // If this is a WebP with per-frame timings, use them; else manifest FPS.
-            if (_frameDurations.TryGetValue(drawBase, out var durations) && durations.Length == frames.Length)
+            if (_frameDurations.TryGetValue(drawBase, out var durations) && durations.Length == frames.Length
+                && _frameDurationTotals.TryGetValue(drawBase, out var total) && total > 0)
             {
-                double total = 0;
-                foreach (var d in durations) total += d;
-                if (total > 0)
+                double t = clock % total;
+                double acc = 0;
+                for (int i = 0; i < durations.Length; i++)
                 {
-                    double t = clock % total;
-                    double acc = 0;
-                    for (int i = 0; i < durations.Length; i++)
-                    {
-                        acc += durations[i];
-                        if (t < acc) { idx = i; break; }
-                    }
+                    acc += durations[i];
+                    if (t < acc) { idx = i; break; }
                 }
             }
             else
@@ -233,7 +231,13 @@ public sealed class AvatarRenderer : IDisposable
                 if (webpFrames.Length > 1)
                 {
                     var durs = WebpLoader.LoadFrameDurations(fullBase);
-                    if (durs.Length == webpFrames.Length) _frameDurations[baseRel] = durs;
+                    if (durs.Length == webpFrames.Length)
+                    {
+                        _frameDurations[baseRel] = durs;
+                        double total = 0;
+                        foreach (var d in durs) total += d;
+                        _frameDurationTotals[baseRel] = total;
+                    }
                 }
                 return webpFrames;
             }
@@ -326,6 +330,7 @@ public sealed class AvatarRenderer : IDisposable
             foreach (var t in arr) t?.Dispose();
         _frames.Clear();
         _frameDurations.Clear();
+        _frameDurationTotals.Clear();
         _entry = null;
         _activeIntentBase = null;
         _activeVariantKey = null;
