@@ -513,11 +513,14 @@ public class MorpheusGame : Game
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
         // Layer 3: avatar shifted down so it clips into frame bottom (TV-screen feel)
-        int avatarShiftDown = (int)(avatarBox.Height * 0.08f);
+        int avatarShiftDown = (int)(avatarBox.Height * 0.03f);
         var shiftedAvatarBox = new Rectangle(
             avatarBox.X, avatarBox.Y + avatarShiftDown,
             avatarBox.Width, avatarBox.Height);
         _avatarRenderer.Draw(_batch, shiftedAvatarBox, _avatarState);
+
+        // Layer 3.5: TV static on top of avatar, inside the inset border
+        _bgRenderer.DrawStatic(_batch, _pixel, vortexBox);
 
         // Layer 4: UI frame overlay on top of avatar
         if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);

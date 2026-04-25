@@ -144,6 +144,28 @@ public sealed class BackgroundRenderer : IDisposable
         return new Color((int)(tint.R * a), (int)(tint.G * a), (int)(tint.B * a));
     }
 
+    private static Color HsvToColor(float h, float s, float v, float alpha)
+    {
+        h = ((h % 1f) + 1f) % 1f;
+        int i = (int)(h * 6);
+        float f = h * 6f - i;
+        float p = v * (1f - s);
+        float q = v * (1f - f * s);
+        float t = v * (1f - (1f - f) * s);
+        float r, g, b;
+        switch (i % 6)
+        {
+            case 0:  r = v; g = t; b = p; break;
+            case 1:  r = q; g = v; b = p; break;
+            case 2:  r = p; g = v; b = t; break;
+            case 3:  r = p; g = q; b = v; break;
+            case 4:  r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+        }
+        int a = (int)(Math.Clamp(alpha, 0f, 1f) * 255);
+        return new Color((int)(r * 255), (int)(g * 255), (int)(b * 255), a);
+    }
+
     private void SpawnParticle(int i, bool randomZ)
     {
         _particles[i] = new Vector3(
@@ -195,12 +217,13 @@ public sealed class BackgroundRenderer : IDisposable
             angles[r] = t * MathHelper.TwoPi * (0.6f - frac * 0.5f);
         }
 
-        // Draw rings
+        // Draw rings — each ring gets a prismatic hue that slowly rotates over time
         for (int r = 0; r < VortexRings; r++)
         {
             float frac  = r / (float)(VortexRings - 1);
-            float alpha = 0.08f + frac * 0.28f; // brighter at edges
-            var col = Tinted(tint, alpha);
+            float alpha = 0.12f + frac * 0.45f;
+            float hue   = ((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08)) % 1f;
+            var col = HsvToColor(hue, 1f, 1f, alpha);
 
             for (int s = 0; s < VortexSegments; s++)
             {
@@ -213,15 +236,16 @@ public sealed class BackgroundRenderer : IDisposable
             }
         }
 
-        // Draw spokes connecting adjacent rings
+        // Draw spokes — interpolate hue between adjacent rings
         for (int sp = 0; sp < VortexSpokes; sp++)
         {
             float spokeAngleBase = sp / (float)VortexSpokes * MathHelper.TwoPi;
             for (int r = 0; r < VortexRings - 1; r++)
             {
                 float frac  = r / (float)(VortexRings - 1);
-                float alpha = 0.06f + frac * 0.18f;
-                var col = Tinted(tint, alpha);
+                float alpha = 0.08f + frac * 0.22f;
+                float hue   = ((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08)) % 1f;
+                var col = HsvToColor(hue, 1f, 1f, alpha);
 
                 float a0 = spokeAngleBase + angles[r];
                 float a1 = spokeAngleBase + angles[r + 1];
@@ -251,6 +275,24 @@ public sealed class BackgroundRenderer : IDisposable
         _device.BlendState        = BlendState.AlphaBlend;
         _device.DepthStencilState = DepthStencilState.Default;
         _device.Viewport          = saved;
+    }
+
+    // TV static — white/gray translucent noise dots drawn each frame.
+    private const int StaticDotCount = 1800;
+    private readonly Random _staticRng = new();
+
+    // Called from SpriteBatch.Begin..End block; pixel is a 1×1 white texture.
+    public void DrawStatic(SpriteBatch batch, Texture2D pixel, Rectangle target)
+    {
+        for (int i = 0; i < StaticDotCount; i++)
+        {
+            int x = target.X + _staticRng.Next(target.Width - 1);
+            int y = target.Y + _staticRng.Next(target.Height - 1);
+            int alpha  = _staticRng.Next(10, 54);
+            int bright = (int)(_staticRng.Next(160, 256) * alpha / 255f); // premultiply for AlphaBlend
+            int size   = _staticRng.Next(100) < 8 ? 3 : 2; // occasional larger fleck
+            batch.Draw(pixel, new Rectangle(x, y, size, size), new Color(bright, bright, bright, alpha));
+        }
     }
 
     // Maps a pixel in local rect-space [0,w]x[0,h] to NDC [-1,1]
