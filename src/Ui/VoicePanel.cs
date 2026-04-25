@@ -19,6 +19,8 @@ public sealed class VoicePanel
     public Button Preview { get; } = new() { Label = "preview" };
     public Button Refresh { get; } = new() { Label = "refresh" };
 
+    public Color AccentColor { get; set; } = new Color(0, 200, 255);
+
     private readonly List<Widget> _widgets;
 
     public VoicePanel()
@@ -94,12 +96,12 @@ public sealed class VoicePanel
         if (Voice.SelectedId is { Length: > 0 } id) s.ElevenLabsVoiceId = id;
     }
 
-    private static void DrawPanel(SpriteBatch b, Texture2D px, Rectangle r)
+    private void DrawPanel(SpriteBatch b, Texture2D px, Rectangle r)
     {
         b.Draw(px, r, new Color(0, 10, 20, 180));
-        b.Draw(px, new Rectangle(r.X, r.Y, r.Width, 1), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.X, r.Y, 1, r.Height), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.Right - 1, r.Y, 1, r.Height), new Color(0, 200, 255));
+        b.Draw(px, new Rectangle(r.X, r.Y,          r.Width, 1), AccentColor);
+        b.Draw(px, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), AccentColor);
+        b.Draw(px, new Rectangle(r.X, r.Y, 1,          r.Height), AccentColor);
+        b.Draw(px, new Rectangle(r.Right - 1, r.Y, 1, r.Height), AccentColor);
     }
 }

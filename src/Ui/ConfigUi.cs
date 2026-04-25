@@ -43,14 +43,14 @@ public sealed class ConfigUi
         TemplateIndex = ((TemplateIndex + delta) % Templates.Count + Templates.Count) % Templates.Count;
     }
 
-    public void Draw(SpriteBatch batch, TextRenderer text, Rectangle viewport)
+    public void Draw(SpriteBatch batch, TextRenderer text, Rectangle viewport, Color tint)
     {
         if (!Visible) return;
         var y = 12f;
         const float lh = 22f;
         var pad = new Vector2(14f, y);
 
-        text.DrawString(batch, "morpheus", pad, Color.Cyan, 24);
+        text.DrawString(batch, "morpheus", pad, tint, 24);
         pad.Y += 32;
 
         var av = SelectedAvatar;
@@ -69,7 +69,8 @@ public sealed class ConfigUi
 
         pad.X = 14f;
         pad.Y = viewport.Height - 18f;
-        text.DrawString(batch, "F1 bind   F2 avatar   F3 template   F5 test   F6 install personality   Esc quit",
+        text.DrawString(batch,
+            "F1 bind   F2 avatar   F3 template   F5 test   F6 personality   F7 color   F8 compact   F9 reset layout   Esc quit",
             pad, new Color(150, 150, 150), 12);
     }
 }

@@ -22,6 +22,8 @@ public sealed class VoicesExtraPanel
     public Dropdown  SharedResults { get; } = new();
     public Button    UseShared     { get; } = new() { Label = "use" };
 
+    public Color AccentColor { get; set; } = new Color(0, 200, 255);
+
     public IReadOnlyList<TextInput> TextInputs => new[] { CustomName, CustomId, Search };
 
     public void Layout(int x, int y, int width)
@@ -78,12 +80,12 @@ public sealed class VoicesExtraPanel
         SharedResults.SelectedIndex = voices.Count > 0 ? 0 : -1;
     }
 
-    private static void DrawPanel(SpriteBatch b, Texture2D px, Rectangle r)
+    private void DrawPanel(SpriteBatch b, Texture2D px, Rectangle r)
     {
         b.Draw(px, r, new Color(0, 10, 20, 180));
-        b.Draw(px, new Rectangle(r.X, r.Y, r.Width, 1), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.X, r.Y, 1, r.Height), new Color(0, 200, 255));
-        b.Draw(px, new Rectangle(r.Right - 1, r.Y, 1, r.Height), new Color(0, 200, 255));
+        b.Draw(px, new Rectangle(r.X, r.Y,          r.Width, 1), AccentColor);
+        b.Draw(px, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), AccentColor);
+        b.Draw(px, new Rectangle(r.X, r.Y, 1,          r.Height), AccentColor);
+        b.Draw(px, new Rectangle(r.Right - 1, r.Y, 1, r.Height), AccentColor);
     }
 }

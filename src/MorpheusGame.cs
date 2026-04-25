@@ -82,6 +82,37 @@ public class MorpheusGame : Game
     private bool _compactMode = false;
     private string? _lastSoundEmotion;
 
+    // Color palette cycled by F7
+    private static readonly (string Name, Color Tint, float VortexHue)[] Palette =
+    {
+        ("cyan",   new Color(  0, 180, 255), 0.50f),
+        ("red",    new Color(255,  60,  60), 0.00f),
+        ("green",  new Color( 60, 255, 100), 0.33f),
+        ("purple", new Color(160,  60, 255), 0.75f),
+        ("orange", new Color(255, 150,  30), 0.08f),
+        ("pink",   new Color(255,  60, 200), 0.88f),
+        ("white",  new Color(220, 230, 255), 0.62f),
+    };
+    private Color ActiveTint    => Palette[Math.Abs(_layout.ColorIndex) % Palette.Length].Tint;
+    private float ActiveVortexHue => Palette[Math.Abs(_layout.ColorIndex) % Palette.Length].VortexHue;
+
+    // Per-panel layout rects (position + size, user-draggable/resizable)
+    private Rectangle _voiceRect;
+    private Rectangle _sessionsRect;
+    private Rectangle _voicesExtraRect;
+    private Rectangle _messagesRect;
+
+    // Panel drag/resize state
+    private enum DragPanel { None, Voice, Sessions, VoicesExtra, Messages }
+    private DragPanel _activeDragPanel = DragPanel.None;
+    private bool _panelResizing = false;
+    private Point _panelDragStartMouse;
+    private Rectangle _panelDragStartRect;
+
+    // Layout persistence
+    private string _layoutPath = "";
+    private LayoutConfig _layout = new();
+
     public MorpheusGame()
     {
         _graphics = new GraphicsDeviceManager(this)
@@ -101,6 +132,18 @@ public class MorpheusGame : Game
         _settingsPath = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
         _settings = SettingsStore.Load(_settingsPath);
         _bg = ParseColor(_settings.BackgroundColor) ?? Color.Black;
+
+        _layoutPath = Path.Combine(AppContext.BaseDirectory, "layout.local.json");
+        _layout = LayoutStore.Load(_layoutPath);
+        if (_layout.WindowWidth > 0 && _layout.WindowHeight > 0)
+        {
+            _graphics.PreferredBackBufferWidth  = _layout.WindowWidth;
+            _graphics.PreferredBackBufferHeight = _layout.WindowHeight;
+            _graphics.ApplyChanges();
+        }
+        _avatarOffsetX = _layout.AvatarOffsetX;
+        _avatarOffsetY = _layout.AvatarOffsetY;
+        if (_layout.AvatarSize > 0) _avatarSizeOverride = _layout.AvatarSize;
 
         _liveSession = SessionStore.CreateNew();
         _viewSession = _liveSession;
@@ -122,6 +165,7 @@ public class MorpheusGame : Game
 
         _ = _listener.StartAsync(_settings.HookPort);
 
+        Exiting += OnWindowExiting;
         base.Initialize();
     }
 
@@ -132,6 +176,14 @@ public class MorpheusGame : Game
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _bgRenderer.LoadContent(GraphicsDevice);
         _pixel.SetData(new[] { Color.White });
+
+        // Initialize panel rects — use saved layout if present, else viewport-relative defaults
+        var vp0 = GraphicsDevice.Viewport.Bounds;
+        bool hasLayout = File.Exists(_layoutPath);
+        _voiceRect        = hasLayout ? _layout.Voice.ToRect()        : new Rectangle(10, 140, 290, 270);
+        _sessionsRect     = hasLayout ? _layout.Sessions.ToRect()     : new Rectangle(vp0.Width - 300, 140, 290, 110);
+        _voicesExtraRect  = hasLayout ? _layout.VoicesExtra.ToRect()  : new Rectangle(vp0.Width - 290, 270, 270, 165);
+        _messagesRect     = hasLayout ? _layout.Messages.ToRect()     : new Rectangle(40, vp0.Height - 220, vp0.Width - 80, 180);
 
         var avatarsRoot = Path.Combine(AppContext.BaseDirectory, "avatars");
         var templatesRoot = Path.Combine(AppContext.BaseDirectory, "templates");
@@ -155,8 +207,9 @@ public class MorpheusGame : Game
         ApplyAvatar();
         ApplyTemplate(templates);
 
-        _voicePanel.Layout(15, 145, 280);
         _voicePanel.BindFromSettings(_settings);
+        _voicePanel.AccentColor  = ActiveTint;
+        _voicesExtra.AccentColor = ActiveTint;
         _voicePanel.Save.Clicked += () =>
         {
             _voicePanel.WriteToSettings(_settings);
@@ -325,7 +378,9 @@ public class MorpheusGame : Game
             if (Pressed(k, Keys.F3)) { _ui.CycleTemplate(+1); ApplyTemplate(TemplateLoader.Discover(Path.Combine(AppContext.BaseDirectory, "templates"))); SaveSettings(); }
             if (Pressed(k, Keys.F5)) TestSpeak();
             if (Pressed(k, Keys.F6)) InstallActivePersonality();
+            if (Pressed(k, Keys.F7)) CycleColor();
             if (Pressed(k, Keys.F8)) { _compactMode = !_compactMode; _ui.StatusLine = _compactMode ? "compact mode ON" : "compact mode OFF"; }
+            if (Pressed(k, Keys.F9)) ResetLayout();
         }
         else
         {
@@ -336,6 +391,7 @@ public class MorpheusGame : Game
 
         var m = Mouse.GetState();
         UpdateAvatarDragResize(vp, m, _prevMouse);
+        if (!_compactMode) UpdatePanelDragResize(m, _prevMouse);
         var input = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
         _voicePanel.Update(input);
         // Capture Open BEFORE Update — the dropdown sets Open=false the same
@@ -362,30 +418,21 @@ public class MorpheusGame : Game
     private void LayoutForFrame(Rectangle vp)
     {
         var tpl = _activeTemplate?.Manifest;
-        int textSize = tpl?.TextSize > 0 ? tpl.TextSize : 16;
+        int textSize   = tpl?.TextSize   > 0 ? tpl.TextSize   : 16;
         int lineHeight = tpl?.LineHeight > 0 ? tpl.LineHeight : 20;
-        var msgBox = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
-        _messageView.Layout(msgBox, tpl?.MessageInsets, textSize, lineHeight, 32, 6);
 
-        var sz = _ui.SelectedAvatar?.Manifest.Size;
-        int baseWidth = sz?.Width is > 0 ? sz.Width : 400;
-        int baseHeight = sz?.Height is > 0 ? sz.Height : 400;
-        double aspectRatio = (double)baseWidth / baseHeight;
+        _messageView.Layout(_messagesRect, tpl?.MessageInsets, textSize, lineHeight, 32, 6);
+        _voicePanel.Layout(_voiceRect.X, _voiceRect.Y, _voiceRect.Width);
 
-        int aw = _avatarSizeOverride ?? baseWidth;
-        int ax = vp.Width / 2 - aw / 2 + 60 + _avatarOffsetX;
-        int avatarRight = ax + aw;
+        // Sessions widgets sit inside the stored sessions rect
+        _sessionsDropdown.Bounds = new Rectangle(
+            _sessionsRect.X + 10, _sessionsRect.Y + 20,
+            Math.Max(60, _sessionsRect.Width - 20), 28);
+        _clearSessionsBtn.Bounds = new Rectangle(
+            _sessionsRect.X + 10, _sessionsRect.Y + 58,
+            Math.Min(130, Math.Max(60, _sessionsRect.Width - 20)), 26);
 
-        // Position right panels at least 20px from avatar right edge, or at default position (vp.Width - 300)
-        int rightEdgeMin = avatarRight + 20;
-        int px = Math.Max(vp.Width - 300, rightEdgeMin);
-        int panelWidth = Math.Max(200, vp.Width - px - 10);
-
-        _sessionsDropdown.Bounds = new Rectangle(px + 10, 160, Math.Min(270, panelWidth - 20), 28);
-        _clearSessionsBtn.Bounds = new Rectangle(px + 10, 198, Math.Min(130, panelWidth - 20), 26);
-
-        // Extra voices panel sits below the sessions panel on the right.
-        _voicesExtra.Layout(px + 10, 270, Math.Min(270, panelWidth - 20));
+        _voicesExtra.Layout(_voicesExtraRect.X, _voicesExtraRect.Y, _voicesExtraRect.Width);
     }
 
     // Generic shape: emotion-or-clip, gap min/max, hold duration, weight.
@@ -482,7 +529,7 @@ public class MorpheusGame : Game
         var tpl = _activeTemplate?.Manifest;
 
         // Full-window background grid (dimmer)
-        _bgRenderer.Draw(vp, new Color(0, 180, 255));
+        _bgRenderer.Draw(vp, ActiveTint);
 
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
@@ -512,7 +559,7 @@ public class MorpheusGame : Game
 
         // Layer 2: vortex effect inside the border
         _batch.End();
-        _bgRenderer.DrawDiagonal(vortexBox, new Color(0, 210, 255));
+        _bgRenderer.DrawDiagonal(vortexBox, ActiveTint, ActiveVortexHue);
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
         // Layer 3: avatar shifted down so it clips into frame bottom (TV-screen feel)
@@ -528,8 +575,7 @@ public class MorpheusGame : Game
         // Layer 4: UI frame overlay on top of avatar
         if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
 
-        var msgBox = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
-        if (_messageFrame is not null) _batch.Draw(_messageFrame, msgBox, Color.White);
+        if (_messageFrame is not null) _batch.Draw(_messageFrame, _messagesRect, Color.White);
 
         _messageView.ForwardTex = _uiForwardTex;
         _messageView.BackwardTex = _uiBackwardTex;
@@ -537,36 +583,34 @@ public class MorpheusGame : Game
 
         if (!_compactMode)
         {
-            _ui.Draw(_batch, _text, vp);
+            _ui.Draw(_batch, _text, vp, ActiveTint);
 
-            var voiceRect = new Rectangle(10, 140, 290, 300);
-            _voicePanel.Draw(_batch, _text, _pixel, voiceRect);
+            _voicePanel.Draw(_batch, _text, _pixel, _voiceRect);
+            DrawSessionsPanel();
+            _voicesExtra.Draw(_batch, _text, _pixel, _voicesExtraRect);
 
-            DrawSessionsPanel(vp);
-
-            int px2 = vp.Width - 300;
-            var voicesExtraRect = new Rectangle(px2, 260, 290, 200);
-            _voicesExtra.Draw(_batch, _text, _pixel, voicesExtraRect);
+            // Resize handles — small cyan squares in bottom-right of each draggable panel
+            DrawResizeHandle(_voiceRect);
+            DrawResizeHandle(_sessionsRect);
+            DrawResizeHandle(_voicesExtraRect);
+            DrawResizeHandle(_messagesRect);
         }
 
         _batch.End();
         base.Draw(gameTime);
     }
 
-    private void DrawSessionsPanel(Rectangle vp)
+    private void DrawSessionsPanel()
     {
-        int px = vp.Width - 300;
-        var rect = new Rectangle(px, 140, 290, 110);
-        _batch.Draw(_pixel, rect, new Color(0, 10, 20, 180));
-        _batch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, 1), new Color(0, 200, 255));
-        _batch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - 1, rect.Width, 1), new Color(0, 200, 255));
-        _batch.Draw(_pixel, new Rectangle(rect.X, rect.Y, 1, rect.Height), new Color(0, 200, 255));
-        _batch.Draw(_pixel, new Rectangle(rect.Right - 1, rect.Y, 1, rect.Height), new Color(0, 200, 255));
-        _text.DrawString(_batch, "sessions", new Vector2(rect.X + 8, rect.Y + 4),
-            new Color(0, 220, 255), 14);
-
+        var r = _sessionsRect;
+        var tint = ActiveTint;
+        _batch.Draw(_pixel, r, new Color(0, 10, 20, 180));
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Y,          r.Width, 1), tint);
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), tint);
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Y, 1,          r.Height), tint);
+        _batch.Draw(_pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), tint);
+        _text.DrawString(_batch, "sessions", new Vector2(r.X + 8, r.Y + 4), tint, 14);
         _clearSessionsBtn.Draw(_batch, _text, _pixel);
-        // Dropdown last so its open list renders above.
         _sessionsDropdown.Draw(_batch, _text, _pixel);
     }
 
@@ -1019,6 +1063,7 @@ public class MorpheusGame : Game
 
         if (m.LeftButton == ButtonState.Released && prevM.LeftButton == ButtonState.Pressed)
         {
+            if (_avatarDragging || _avatarResizing) SaveLayout();
             _avatarDragging = false;
             _avatarResizing = false;
         }
@@ -1066,6 +1111,133 @@ public class MorpheusGame : Game
                 return new Color(r, g, b, a);
         }
         return null;
+    }
+
+    private void UpdatePanelDragResize(MouseState m, MouseState prevM)
+    {
+        var mouseP = new Point(m.X, m.Y);
+
+        // Release
+        if (m.LeftButton == ButtonState.Released && prevM.LeftButton == ButtonState.Pressed)
+        {
+            if (_activeDragPanel != DragPanel.None) SaveLayout();
+            _activeDragPanel = DragPanel.None;
+            _panelResizing = false;
+            return;
+        }
+
+        // Continue active drag/resize
+        if (_activeDragPanel != DragPanel.None && m.LeftButton == ButtonState.Pressed)
+        {
+            int dx = m.X - _panelDragStartMouse.X;
+            int dy = m.Y - _panelDragStartMouse.Y;
+            Rectangle next;
+            if (_panelResizing)
+            {
+                next = new Rectangle(
+                    _panelDragStartRect.X, _panelDragStartRect.Y,
+                    Math.Max(150, _panelDragStartRect.Width  + dx),
+                    Math.Max(80,  _panelDragStartRect.Height + dy));
+            }
+            else
+            {
+                next = new Rectangle(
+                    _panelDragStartRect.X + dx, _panelDragStartRect.Y + dy,
+                    _panelDragStartRect.Width, _panelDragStartRect.Height);
+            }
+            SetPanelRect(_activeDragPanel, next);
+            return;
+        }
+
+        // Start drag/resize — only if no avatar drag is active
+        if (m.LeftButton != ButtonState.Pressed || prevM.LeftButton != ButtonState.Released) return;
+        if (_avatarDragging || _avatarResizing) return;
+
+        // Check panels in reverse draw order so topmost panel wins
+        DragPanel[] order = { DragPanel.VoicesExtra, DragPanel.Sessions, DragPanel.Voice, DragPanel.Messages };
+        foreach (var panel in order)
+        {
+            var rect = GetPanelRect(panel);
+            bool nearCorner = mouseP.X >= rect.Right  - 20 && mouseP.Y >= rect.Bottom - 20
+                           && mouseP.X <  rect.Right  + 5  && mouseP.Y <  rect.Bottom + 5;
+            bool inTitleBar = !nearCorner && rect.Contains(mouseP) && mouseP.Y < rect.Y + 18;
+            if (!nearCorner && !inTitleBar) continue;
+            _activeDragPanel    = panel;
+            _panelResizing      = nearCorner;
+            _panelDragStartMouse = mouseP;
+            _panelDragStartRect  = rect;
+            return;
+        }
+    }
+
+    private Rectangle GetPanelRect(DragPanel panel) => panel switch
+    {
+        DragPanel.Voice       => _voiceRect,
+        DragPanel.Sessions    => _sessionsRect,
+        DragPanel.VoicesExtra => _voicesExtraRect,
+        DragPanel.Messages    => _messagesRect,
+        _                     => Rectangle.Empty,
+    };
+
+    private void SetPanelRect(DragPanel panel, Rectangle rect)
+    {
+        switch (panel)
+        {
+            case DragPanel.Voice:       _voiceRect       = rect; break;
+            case DragPanel.Sessions:    _sessionsRect    = rect; break;
+            case DragPanel.VoicesExtra: _voicesExtraRect = rect; break;
+            case DragPanel.Messages:    _messagesRect    = rect; break;
+        }
+    }
+
+    private void DrawResizeHandle(Rectangle rect)
+    {
+        var t = ActiveTint;
+        _batch.Draw(_pixel, new Rectangle(rect.Right - 8, rect.Bottom - 8, 6, 6),
+            new Color((int)t.R, (int)t.G, (int)t.B, 160));
+    }
+
+    private void SaveLayout()
+    {
+        _layout.Voice       = PanelLayout.From(_voiceRect);
+        _layout.Sessions    = PanelLayout.From(_sessionsRect);
+        _layout.VoicesExtra = PanelLayout.From(_voicesExtraRect);
+        _layout.Messages    = PanelLayout.From(_messagesRect);
+        _layout.AvatarOffsetX = _avatarOffsetX;
+        _layout.AvatarOffsetY = _avatarOffsetY;
+        _layout.AvatarSize    = _avatarSizeOverride ?? 0;
+        LayoutStore.Save(_layoutPath, _layout);
+    }
+
+    private void OnWindowExiting(object? sender, EventArgs args)
+    {
+        _layout.WindowWidth  = GraphicsDevice.Viewport.Width;
+        _layout.WindowHeight = GraphicsDevice.Viewport.Height;
+        SaveLayout();
+    }
+
+    private void CycleColor()
+    {
+        _layout.ColorIndex = (_layout.ColorIndex + 1) % Palette.Length;
+        var name = Palette[_layout.ColorIndex].Name;
+        _voicePanel.AccentColor  = ActiveTint;
+        _voicesExtra.AccentColor = ActiveTint;
+        _ui.StatusLine = $"color: {name}";
+        SaveLayout();
+    }
+
+    private void ResetLayout()
+    {
+        var vp = GraphicsDevice.Viewport.Bounds;
+        _voiceRect       = new Rectangle(10, 140, 290, 270);
+        _sessionsRect    = new Rectangle(vp.Width - 300, 140, 290, 110);
+        _voicesExtraRect = new Rectangle(vp.Width - 290, 270, 270, 165);
+        _messagesRect    = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
+        _avatarOffsetX   = 0;
+        _avatarOffsetY   = 0;
+        _avatarSizeOverride = null;
+        SaveLayout();
+        _ui.StatusLine = "layout reset";
     }
 
     private void PlayTemplateSound(string key)

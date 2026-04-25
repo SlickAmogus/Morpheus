@@ -195,7 +195,7 @@ public sealed class BackgroundRenderer : IDisposable
     public void UpdateDiagonal(double deltaSeconds) =>
         _vortexTime += deltaSeconds;
 
-    public void DrawDiagonal(Rectangle target, Color tint)
+    public void DrawDiagonal(Rectangle target, Color tint, float hueOffset = 0f)
     {
         if (_effect is null || _device is null) return;
         if (target.Width <= 0 || target.Height <= 0) return;
@@ -232,7 +232,7 @@ public sealed class BackgroundRenderer : IDisposable
         {
             float frac  = r / (float)(VortexRings - 1);
             float alpha = 0.12f + frac * 0.45f;
-            float hue   = ((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08)) % 1f;
+            float hue   = (((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08) + hueOffset) % 1f + 1f) % 1f;
             var col = HsvToColor(hue, 1f, 1f, alpha);
 
             for (int s = 0; s < VortexSegments; s++)
@@ -254,7 +254,7 @@ public sealed class BackgroundRenderer : IDisposable
             {
                 float frac  = r / (float)(VortexRings - 1);
                 float alpha = 0.08f + frac * 0.22f;
-                float hue   = ((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08)) % 1f;
+                float hue   = (((float)(r / (float)VortexRings) + (float)(_vortexTime * 0.08) + hueOffset) % 1f + 1f) % 1f;
                 var col = HsvToColor(hue, 1f, 1f, alpha);
 
                 float a0 = spokeAngleBase + angles[r];
