@@ -153,51 +153,83 @@ public sealed class BackgroundRenderer : IDisposable
         _brightness[i] = (float)(_rng.NextDouble() * 0.6 + 0.4);
     }
 
-    // Draws a 2D diagonal scrolling grid over a screen-space rectangle.
-    // Lines run at 45 degrees, scrolling toward bottom-right.
-    private VertexPositionColor[] _diagVerts = Array.Empty<VertexPositionColor>();
-    private double _diagOffset;
-    private const float DiagSpacing = 32f; // pixels between diagonal lines
-    private const float DiagSpeed   = 18f; // pixels per second
+    // Spinning vortex tunnel — concentric rotating rings connected by spoke lines.
+    private VertexPositionColor[] _vortexVerts = Array.Empty<VertexPositionColor>();
+    private double _vortexTime;
+    private const int VortexRings    = 12;
+    private const int VortexSegments = 48; // smoothness of each ring
+    private const int VortexSpokes   = 8;  // connector lines between rings
 
-    public void UpdateDiagonal(double deltaSeconds)
-    {
-        _diagOffset = (_diagOffset + deltaSeconds * DiagSpeed) % DiagSpacing;
-    }
+    public void UpdateDiagonal(double deltaSeconds) =>
+        _vortexTime += deltaSeconds;
 
     public void DrawDiagonal(Rectangle target, Color tint)
     {
         if (_effect is null || _device is null) return;
         if (target.Width <= 0 || target.Height <= 0) return;
 
-        // Build lines in screen-space pixel coords, then project with orthographic
-        // Number of lines: enough to cover width+height with spacing
-        int lineCount = (int)((target.Width + target.Height) / DiagSpacing) + 2;
-        int needed = lineCount * 2 * 2; // *2 for each direction (/ and \), *2 verts
-        if (_diagVerts.Length != needed)
-            _diagVerts = new VertexPositionColor[needed];
+        float cx = target.Width  * 0.5f;
+        float cy = target.Height * 0.5f;
+        float maxR = Math.Min(target.Width, target.Height) * 0.48f;
 
-        float offset = (float)_diagOffset;
+        // Vertex budget:
+        //   Rings: VortexRings * VortexSegments * 2 (line-list around each ring)
+        //   Spokes: VortexSpokes * (VortexRings - 1) * 2 (line between adjacent rings)
+        int ringVerts  = VortexRings * VortexSegments * 2;
+        int spokeVerts = VortexSpokes * (VortexRings - 1) * 2;
+        int total = ringVerts + spokeVerts;
+        if (_vortexVerts.Length != total)
+            _vortexVerts = new VertexPositionColor[total];
+
         int v = 0;
-        float w = target.Width;
-        float h = target.Height;
-        var col = Tinted(tint, 0.25f);
+        float t = (float)_vortexTime;
 
-        for (int i = 0; i < lineCount; i++)
+        // Pre-compute ring positions (angle offsets and radii)
+        Span<float> radii   = stackalloc float[VortexRings];
+        Span<float> angles  = stackalloc float[VortexRings];
+        for (int r = 0; r < VortexRings; r++)
         {
-            float t = -h + i * DiagSpacing + offset;
-            // Lines going top-left → bottom-right (positive diagonal)
-            // Start on top edge or left edge, end on bottom or right
-            float x0 = t, y0 = 0f;
-            float x1 = t + h, y1 = h;
-            // Clip to [0,w] x [0,h]
-            if (x0 < 0) { y0 -= x0; x0 = 0; }
-            if (x1 > w) { y1 -= (x1 - w); x1 = w; }
+            float frac = r / (float)(VortexRings - 1);           // 0=inner 1=outer
+            radii[r]  = maxR * (frac * frac * 0.95f + 0.02f);   // quadratic, perspective feel
+            // Inner rings spin faster in one direction, outer slower in opposite
+            angles[r] = t * MathHelper.TwoPi * (0.6f - frac * 0.5f);
+        }
 
-            _diagVerts[v++] = new VertexPositionColor(
-                ScreenToNdc(target.X + x0, target.Y + y0, target), col);
-            _diagVerts[v++] = new VertexPositionColor(
-                ScreenToNdc(target.X + x1, target.Y + y1, target), col);
+        // Draw rings
+        for (int r = 0; r < VortexRings; r++)
+        {
+            float frac  = r / (float)(VortexRings - 1);
+            float alpha = 0.08f + frac * 0.28f; // brighter at edges
+            var col = Tinted(tint, alpha);
+
+            for (int s = 0; s < VortexSegments; s++)
+            {
+                float a0 = angles[r] + s       / (float)VortexSegments * MathHelper.TwoPi;
+                float a1 = angles[r] + (s + 1) / (float)VortexSegments * MathHelper.TwoPi;
+                var p0 = new Vector2(cx + MathF.Cos(a0) * radii[r], cy + MathF.Sin(a0) * radii[r]);
+                var p1 = new Vector2(cx + MathF.Cos(a1) * radii[r], cy + MathF.Sin(a1) * radii[r]);
+                _vortexVerts[v++] = new VertexPositionColor(PixelToNdc(p0, target), col);
+                _vortexVerts[v++] = new VertexPositionColor(PixelToNdc(p1, target), col);
+            }
+        }
+
+        // Draw spokes connecting adjacent rings
+        for (int sp = 0; sp < VortexSpokes; sp++)
+        {
+            float spokeAngleBase = sp / (float)VortexSpokes * MathHelper.TwoPi;
+            for (int r = 0; r < VortexRings - 1; r++)
+            {
+                float frac  = r / (float)(VortexRings - 1);
+                float alpha = 0.06f + frac * 0.18f;
+                var col = Tinted(tint, alpha);
+
+                float a0 = spokeAngleBase + angles[r];
+                float a1 = spokeAngleBase + angles[r + 1];
+                var p0 = new Vector2(cx + MathF.Cos(a0) * radii[r],     cy + MathF.Sin(a0) * radii[r]);
+                var p1 = new Vector2(cx + MathF.Cos(a1) * radii[r + 1], cy + MathF.Sin(a1) * radii[r + 1]);
+                _vortexVerts[v++] = new VertexPositionColor(PixelToNdc(p0, target), col);
+                _vortexVerts[v++] = new VertexPositionColor(PixelToNdc(p1, target), col);
+            }
         }
 
         var saved = _device.Viewport;
@@ -213,7 +245,7 @@ public sealed class BackgroundRenderer : IDisposable
         {
             pass.Apply();
             if (v >= 2)
-                _device.DrawUserPrimitives(PrimitiveType.LineList, _diagVerts, 0, v / 2);
+                _device.DrawUserPrimitives(PrimitiveType.LineList, _vortexVerts, 0, v / 2);
         }
 
         _device.BlendState        = BlendState.AlphaBlend;
@@ -221,11 +253,11 @@ public sealed class BackgroundRenderer : IDisposable
         _device.Viewport          = saved;
     }
 
-    // Maps a screen pixel within `rect` to NDC [-1, 1]
-    private static Vector3 ScreenToNdc(float sx, float sy, Rectangle rect)
+    // Maps a pixel in local rect-space [0,w]x[0,h] to NDC [-1,1]
+    private static Vector3 PixelToNdc(Vector2 p, Rectangle rect)
     {
-        float nx = (sx - rect.X) / rect.Width  * 2f - 1f;
-        float ny = 1f - (sy - rect.Y) / rect.Height * 2f;
+        float nx = p.X / rect.Width  * 2f - 1f;
+        float ny = 1f - p.Y / rect.Height * 2f;
         return new Vector3(nx, ny, 0f);
     }
 

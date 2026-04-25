@@ -502,13 +502,22 @@ public class MorpheusGame : Game
         // Layer 1: black fill for avatar box
         _batch.Draw(_pixel, frameBox, Color.Black);
 
-        // Layer 2: diagonal grid (ends batch, draws 3D, restarts batch)
+        // Layer 2: vortex effect inset ~5% so it sits inside the ui_avatar.png border
+        int insetH = (int)(frameBox.Width  * 0.05f);
+        int insetV = (int)(frameBox.Height * 0.05f);
+        var vortexBox = new Rectangle(
+            frameBox.X + insetH, frameBox.Y + insetV,
+            frameBox.Width - insetH * 2, frameBox.Height - insetV * 2);
         _batch.End();
-        _bgRenderer.DrawDiagonal(frameBox, new Color(0, 210, 255));
+        _bgRenderer.DrawDiagonal(vortexBox, new Color(0, 210, 255));
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
-        // Layer 3: avatar webp/png
-        _avatarRenderer.Draw(_batch, avatarBox, _avatarState);
+        // Layer 3: avatar shifted down so it clips into frame bottom (TV-screen feel)
+        int avatarShiftDown = (int)(avatarBox.Height * 0.08f);
+        var shiftedAvatarBox = new Rectangle(
+            avatarBox.X, avatarBox.Y + avatarShiftDown,
+            avatarBox.Width, avatarBox.Height);
+        _avatarRenderer.Draw(_batch, shiftedAvatarBox, _avatarState);
 
         // Layer 4: UI frame overlay on top of avatar
         if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
