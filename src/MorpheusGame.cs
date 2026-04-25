@@ -80,6 +80,7 @@ public class MorpheusGame : Game
     private double _avatarAspectRatio = 1.0;
 
     private bool _compactMode = false;
+    private string? _lastSoundEmotion;
 
     public MorpheusGame()
     {
@@ -499,15 +500,17 @@ public class MorpheusGame : Game
         var frameBox = new Rectangle(ax, ay, aw, ah);
         var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
 
-        // Layer 1: black fill for avatar box
-        _batch.Draw(_pixel, frameBox, Color.Black);
-
-        // Layer 2: vortex effect inset ~5% so it sits inside the ui_avatar.png border
+        // Inset rect that fits inside ui_avatar.png's border — used for fill, vortex and static
         int insetH = (int)(frameBox.Width  * 0.05f);
         int insetV = (int)(frameBox.Height * 0.05f);
         var vortexBox = new Rectangle(
             frameBox.X + insetH, frameBox.Y + insetV,
             frameBox.Width - insetH * 2, frameBox.Height - insetV * 2);
+
+        // Layer 1: black fill only for the interior (edges stay transparent so grid shows through frame border)
+        _batch.Draw(_pixel, vortexBox, Color.Black);
+
+        // Layer 2: vortex effect inside the border
         _batch.End();
         _bgRenderer.DrawDiagonal(vortexBox, new Color(0, 210, 255));
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
@@ -656,7 +659,14 @@ public class MorpheusGame : Game
             if (currentPos >= chunkStartPos)
             {
                 if (segment.Emotion is not null)
+                {
                     _avatarState.Emotion = segment.Emotion;
+                    if (segment.Emotion != _lastSoundEmotion)
+                    {
+                        PlayTemplateSound(segment.Emotion);
+                        _lastSoundEmotion = segment.Emotion;
+                    }
+                }
                 if (!string.IsNullOrEmpty(segment.Text))
                     EnqueueSpeech(segment.Text);
             }
@@ -666,7 +676,14 @@ public class MorpheusGame : Game
                 int skipChars = chunkStartPos - currentPos;
                 var newPart = segment.Text[skipChars..];
                 if (segment.Emotion is not null)
+                {
                     _avatarState.Emotion = segment.Emotion;
+                    if (segment.Emotion != _lastSoundEmotion)
+                    {
+                        PlayTemplateSound(segment.Emotion);
+                        _lastSoundEmotion = segment.Emotion;
+                    }
+                }
                 if (!string.IsNullOrEmpty(newPart))
                     EnqueueSpeech(newPart);
             }
@@ -749,8 +766,14 @@ public class MorpheusGame : Game
 
     private void StartNextSpeech()
     {
-        if (_speechQueue.Count == 0) { _speechActive = false; return; }
+        if (_speechQueue.Count == 0)
+        {
+            if (_speechActive) PlayTemplateSound("speak_end");
+            _speechActive = false;
+            return;
+        }
         var next = _speechQueue.Dequeue();
+        if (!_speechActive) PlayTemplateSound("speak_start");
         _speechActive = true;
         _ = SynthesizeAndPlayAsync(next);
     }
@@ -786,6 +809,7 @@ public class MorpheusGame : Game
         if (e.Phase == "pre") _avatarState.ActiveTool = e.ToolName;
         else _avatarState.ActiveTool = null;
         _ui.StatusLine = $"tool {e.Phase}: {e.ToolName}";
+        PlayTemplateSound(e.Phase == "pre" ? "tool_start" : "tool_end");
     }
 
     private void TestSpeak()
@@ -1042,6 +1066,18 @@ public class MorpheusGame : Game
                 return new Color(r, g, b, a);
         }
         return null;
+    }
+
+    private void PlayTemplateSound(string key)
+    {
+        var sfx = _activeTemplate?.Manifest.SoundEffects;
+        if (sfx is null || !sfx.Enabled) return;
+        if (_activeTemplate?.FolderPath is not { } folder) return;
+        string? file = null;
+        if (!sfx.EventSounds.TryGetValue(key, out file))
+            sfx.EmotionSounds.TryGetValue(key, out file);
+        if (string.IsNullOrEmpty(file)) return;
+        Audio.SoundEffectPlayer.Play(Path.Combine(folder, file));
     }
 
     private static string Short(string s) => s.Length <= 8 ? s : s[..8];

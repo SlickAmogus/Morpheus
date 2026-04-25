@@ -124,17 +124,27 @@ public sealed class BackgroundRenderer : IDisposable
 
     private void BuildParticles(Color tint)
     {
-        if (_particleVerts.Length != ParticleCount * 2)
-            _particleVerts = new VertexPositionColor[ParticleCount * 2];
+        // 4 verts per star (horizontal arm + vertical arm)
+        if (_particleVerts.Length != ParticleCount * 4)
+            _particleVerts = new VertexPositionColor[ParticleCount * 4];
 
         for (int i = 0; i < ParticleCount; i++)
         {
             var p = _particles[i];
             float nearness = 1f - p.Z / GridDepth;
-            var col = Tinted(tint, _brightness[i] * nearness * nearness);
-            float r = 0.05f + nearness * 0.1f; // bigger as they approach
-            _particleVerts[i * 2]     = new VertexPositionColor(new Vector3(p.X - r, p.Y, p.Z), col);
-            _particleVerts[i * 2 + 1] = new VertexPositionColor(new Vector3(p.X + r, p.Y, p.Z), col);
+            float bright = _brightness[i] * nearness * nearness;
+            // Near-white with a very faint cyan tint
+            var col = new Color(
+                (int)(Math.Min(1f, bright * 0.95f) * 255),
+                (int)(Math.Min(1f, bright * 1.00f) * 255),
+                (int)(Math.Min(1f, bright * 1.10f) * 255));
+            float r = 0.04f + nearness * 0.12f;
+            // Horizontal arm
+            _particleVerts[i * 4]     = new VertexPositionColor(new Vector3(p.X - r, p.Y,      p.Z), col);
+            _particleVerts[i * 4 + 1] = new VertexPositionColor(new Vector3(p.X + r, p.Y,      p.Z), col);
+            // Vertical arm (shorter — grid is wider than tall)
+            _particleVerts[i * 4 + 2] = new VertexPositionColor(new Vector3(p.X, p.Y - r * 0.5f, p.Z), col);
+            _particleVerts[i * 4 + 3] = new VertexPositionColor(new Vector3(p.X, p.Y + r * 0.5f, p.Z), col);
         }
     }
 

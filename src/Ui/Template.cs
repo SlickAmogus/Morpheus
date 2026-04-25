@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -12,6 +13,15 @@ public sealed class Insets
     public int Bottom { get; set; }
 }
 
+public sealed class SoundEffectsConfig
+{
+    public bool Enabled { get; set; } = false;
+    // emotion name → wav filename relative to template folder (e.g. "sfx/happy.wav")
+    public Dictionary<string, string> EmotionSounds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    // event key → wav filename: speak_start, speak_end, tool_start, tool_end
+    public Dictionary<string, string> EventSounds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 public sealed class TemplateManifest
 {
     public string Name { get; set; } = "";
@@ -24,6 +34,7 @@ public sealed class TemplateManifest
     public Insets? MessageInsets { get; set; }
     public int TextSize { get; set; } = 16;
     public int LineHeight { get; set; } = 20;
+    public SoundEffectsConfig? SoundEffects { get; set; }
 }
 
 public sealed class TemplateEntry

@@ -8,5 +8,24 @@
   "avatarInsets":  { "top": 30, "left": 30, "right": 30, "bottom": 30 },
   "messageInsets": { "top": 30, "left": 60, "right": 60, "bottom": 30 },
   "textSize": 16,
-  "lineHeight": 20
+  "lineHeight": 20,
+  "soundEffects": {
+    "enabled": false,
+    "emotionSounds": {
+      "happy":      "sfx/happy.wav",
+      "sad":        "sfx/sad.wav",
+      "surprised":  "sfx/surprised.wav",
+      "determined": "sfx/determined.wav",
+      "annoyed":    "sfx/annoyed.wav",
+      "worried":    "sfx/worried.wav",
+      "thinking":   "sfx/thinking.wav",
+      "serious":    "sfx/serious.wav"
+    },
+    "eventSounds": {
+      "speak_start": "sfx/speak_start.wav",
+      "speak_end":   "sfx/speak_end.wav",
+      "tool_start":  "sfx/tool_start.wav",
+      "tool_end":    "sfx/tool_end.wav"
+    }
+  }
 }
