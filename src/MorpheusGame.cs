@@ -26,6 +26,7 @@ public class MorpheusGame : Game
 
     private readonly AvatarRenderer _avatarRenderer = new();
     private readonly AvatarState _avatarState = new();
+    private readonly BackgroundRenderer _bgRenderer = new();
     private readonly AudioPlayer _player = new();
     private readonly HookListener _listener = new();
     private readonly ConfigUi _ui = new();
@@ -128,6 +129,7 @@ public class MorpheusGame : Game
         _batch = new SpriteBatch(GraphicsDevice);
         _text = new TextRenderer(GraphicsDevice);
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
+        _bgRenderer.LoadContent(GraphicsDevice);
         _pixel.SetData(new[] { Color.White });
 
         var avatarsRoot = Path.Combine(AppContext.BaseDirectory, "avatars");
@@ -302,6 +304,7 @@ public class MorpheusGame : Game
         var dt = gameTime.ElapsedGameTime.TotalSeconds;
         _gameSeconds += dt;
         _avatarRenderer.Update(dt);
+        _bgRenderer.Update(dt);
 
         var vp = GraphicsDevice.Viewport.Bounds;
         LayoutForFrame(vp);
@@ -472,10 +475,14 @@ public class MorpheusGame : Game
     protected override void Draw(GameTime gameTime)
     {
         GraphicsDevice.Clear(_bg);
-        _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
         var vp = GraphicsDevice.Viewport.Bounds;
         var tpl = _activeTemplate?.Manifest;
+
+        // Full-window background grid (dimmer)
+        _bgRenderer.Draw(vp, new Color(0, 180, 255));
+
+        _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
         var sz = _ui.SelectedAvatar?.Manifest.Size;
         int baseWidth = sz?.Width is > 0 ? sz.Width : 400;
@@ -490,6 +497,11 @@ public class MorpheusGame : Game
         int ay = 80 + _avatarOffsetY;
         var frameBox = new Rectangle(ax, ay, aw, ah);
         var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
+
+        // Avatar box background grid (brighter, tighter)
+        _batch.End();
+        _bgRenderer.Draw(frameBox, new Color(0, 210, 255));
+        _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
         // Draw frame overlay before avatar so avatar renders on top
         if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
@@ -552,6 +564,7 @@ public class MorpheusGame : Game
         _player.Dispose();
         _listener.Dispose();
         _avatarRenderer.Dispose();
+        _bgRenderer.Dispose();
         _text.Dispose();
         _avatarFrame?.Dispose();
         _messageFrame?.Dispose();
