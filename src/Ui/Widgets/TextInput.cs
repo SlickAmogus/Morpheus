@@ -29,6 +29,17 @@ public sealed class TextInput : Widget
         Text += c;
     }
 
+    public void HandlePaste(string text)
+    {
+        if (!Focused) return;
+        foreach (var c in text)
+        {
+            if (c < ' ' || c == 127) continue;
+            if (Text.Length >= MaxLength) break;
+            Text += c;
+        }
+    }
+
     public void HandleKey(Keys key)
     {
         if (!Focused) return;
@@ -49,7 +60,7 @@ public sealed class TextInput : Widget
     public override void Draw(SpriteBatch batch, TextRenderer text, Texture2D pixel)
     {
         var fill = Focused ? new Color(40, 60, 80) : new Color(20, 30, 40);
-        var border = Focused ? new Color(0, 255, 230) : new Color(0, 200, 255);
+        var border = Focused ? Color.White : AccentColor;
         DrawFill(batch, pixel, Bounds, fill);
         DrawBorder(batch, pixel, Bounds, border, 1);
 

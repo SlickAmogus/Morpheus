@@ -70,7 +70,7 @@ public sealed class ConfigUi
         pad.X = 14f;
         pad.Y = viewport.Height - 18f;
         text.DrawString(batch,
-            "F1 bind   F2 avatar   F3 template   F5 test   F6 personality   F7 color   F8 compact   F9 reset layout   Esc quit",
+            "F1 bind   F2 avatar   F3 template   F4 api key   F5 test   F6 personality   F7 color   F8 compact   F9 reset layout   Esc quit",
             pad, new Color(150, 150, 150), 12);
     }
 }

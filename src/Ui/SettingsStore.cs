@@ -1,8 +1,11 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Morpheus.Ui;
+
+public enum AiProvider { Ollama, Gemini, OpenAi, Claude, DeepSeek }
 
 public sealed class CustomVoice
 {
@@ -14,6 +17,7 @@ public sealed class MorpheusSettings
 {
     public string? SelectedAvatar { get; set; }
     public string? SelectedTemplate { get; set; }
+    [JsonIgnore]  // key is stored in keystore.local.dat, not here
     public string? ElevenLabsApiKey { get; set; }
     public string? ElevenLabsVoiceId { get; set; }
     public int HookPort { get; set; } = 47921;
@@ -23,6 +27,11 @@ public sealed class MorpheusSettings
     public float VoiceStyle { get; set; } = 0.0f;
     public bool VoiceSpeakerBoost { get; set; } = true;
     public List<CustomVoice> CustomVoices { get; set; } = new();
+    public AiProvider SummaryProvider { get; set; } = AiProvider.Ollama;
+    [JsonIgnore] public string? GeminiApiKey   { get; set; }
+    [JsonIgnore] public string? OpenAiApiKey   { get; set; }
+    [JsonIgnore] public string? ClaudeApiKey   { get; set; }
+    [JsonIgnore] public string? DeepSeekApiKey { get; set; }
 }
 
 public static class SettingsStore

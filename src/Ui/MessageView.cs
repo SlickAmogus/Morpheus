@@ -17,18 +17,9 @@ public sealed class MessageView
     public List<SessionPage> Pages { get; set; } = new();
     public int PageIndex { get; private set; }
     public event Action<int>? PageChanged;
-    public event Action? ReplayClicked;
-    public event Action? SummaryClicked;
-    public event Action? StopClicked;
 
     public Texture2D? ForwardTex { get; set; }
     public Texture2D? BackwardTex { get; set; }
-
-    // Overlay button sizes — set before calling Layout().
-    public int ReplayBtnWidth   { get; set; } = 52;
-    public int SummaryBtnWidth  { get; set; } = 66;
-    public int StopBtnWidth     { get; set; } = 52;
-    public int OverlayBtnHeight { get; set; } = 20;
 
     private float _scroll;
     private bool _dragging;
@@ -45,9 +36,6 @@ public sealed class MessageView
     private Rectangle _backBtn;
     private Rectangle _forwardBtn;
     private Rectangle _pageLabelRect;
-    private Rectangle _replayBtn;
-    private Rectangle _summaryBtn;
-    private Rectangle _stopBtn;
     private int _textSize = 16;
     private int _lineHeight = 20;
     private int _totalLines;
@@ -123,16 +111,9 @@ public sealed class MessageView
 
         var interior = InsetRect(box, insets);
         const int scrollbarW = 10;
-        int overlayH = OverlayBtnHeight + 4; // strip height including gap
 
-        // Overlay buttons sit at the top of the interior
-        _replayBtn  = new Rectangle(interior.X + 2,                                        interior.Y + 2, ReplayBtnWidth,  OverlayBtnHeight);
-        _summaryBtn = new Rectangle(interior.X + 2 + ReplayBtnWidth + 4,                   interior.Y + 2, SummaryBtnWidth, OverlayBtnHeight);
-        _stopBtn    = new Rectangle(interior.Right - scrollbarW - StopBtnWidth - 4,         interior.Y + 2, StopBtnWidth,    OverlayBtnHeight);
-
-        // Text area and scrollbar start below the overlay strip
-        _scrollbarTrack = new Rectangle(interior.Right - scrollbarW, interior.Y + overlayH, scrollbarW, interior.Height - overlayH);
-        _textArea = new Rectangle(interior.X, interior.Y + overlayH, interior.Width - scrollbarW - 6, interior.Height - overlayH);
+        _scrollbarTrack = new Rectangle(interior.Right - scrollbarW, interior.Y, scrollbarW, interior.Height);
+        _textArea = new Rectangle(interior.X, interior.Y, interior.Width - scrollbarW - 6, interior.Height);
 
         int by = box.Y + (box.Height - btnSize) / 2;
         _backBtn    = new Rectangle(box.X - btnSize - btnSideGap, by, btnSize, btnSize);
@@ -159,9 +140,6 @@ public sealed class MessageView
 
         if (clickNow)
         {
-            if (_replayBtn.Contains(p))  { ReplayClicked?.Invoke();   return; }
-            if (_summaryBtn.Contains(p)) { SummaryClicked?.Invoke(); return; }
-            if (_stopBtn.Contains(p))    { StopClicked?.Invoke();    return; }
             if (_backBtn.Contains(p))    { GoTo(PageIndex - 1); return; }
             if (_forwardBtn.Contains(p)) { GoTo(PageIndex + 1); return; }
             if (_scrollbarThumb.Contains(p)) { _dragging = true; _userScrolled = true; }
@@ -260,24 +238,6 @@ public sealed class MessageView
 
         DrawNav(batch, pixel, _backBtn,    BackwardTex, PageIndex > 0,                AccentColor);
         DrawNav(batch, pixel, _forwardBtn, ForwardTex,  PageIndex < Pages.Count - 1, AccentColor);
-
-        DrawOverlayBtn(batch, text, pixel, _replayBtn,  "replay",   AccentColor);
-        DrawOverlayBtn(batch, text, pixel, _summaryBtn, "summary", AccentColor);
-        DrawOverlayBtn(batch, text, pixel, _stopBtn,    "stop",    AccentColor);
-    }
-
-    private static void DrawOverlayBtn(SpriteBatch batch, TextRenderer text, Texture2D pixel,
-        Rectangle r, string label, Color accent)
-    {
-        batch.Draw(pixel, r, new Color(10, 20, 30, 210));
-        batch.Draw(pixel, new Rectangle(r.X, r.Y,          r.Width, 1), accent);
-        batch.Draw(pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), accent);
-        batch.Draw(pixel, new Rectangle(r.X, r.Y, 1,          r.Height), accent);
-        batch.Draw(pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), accent);
-        var sz = text.Measure(label, 12);
-        text.DrawString(batch, label,
-            new Vector2(r.X + (r.Width - sz.X) / 2f, r.Y + (r.Height - sz.Y) / 2f - 1),
-            Color.White, 12);
     }
 
     private static void DrawNav(SpriteBatch batch, Texture2D pixel, Rectangle r, Texture2D? tex, bool enabled, Color accent)

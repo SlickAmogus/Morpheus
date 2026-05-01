@@ -44,16 +44,16 @@ public sealed class Slider : Widget
 
         var track = TrackRect();
         DrawFill(batch, pixel, track, new Color(30, 40, 55));
-        DrawBorder(batch, pixel, track, new Color(0, 150, 200), 1);
+        DrawBorder(batch, pixel, track, new Color(AccentColor.R / 2, AccentColor.G / 2, AccentColor.B / 2), 1);
 
         float t = (Value - Min) / (Max - Min);
         t = MathHelper.Clamp(t, 0f, 1f);
         var fill = new Rectangle(track.X + 1, track.Y + 1,
             System.Math.Max(0, (int)((track.Width - 2) * t)), track.Height - 2);
-        DrawFill(batch, pixel, fill, new Color(0, 200, 255));
+        DrawFill(batch, pixel, fill, AccentColor);
 
         int knobX = track.X + (int)((track.Width - 10) * t);
         var knob = new Rectangle(knobX, track.Y - 3, 10, track.Height + 6);
-        DrawFill(batch, pixel, knob, _dragging ? Color.White : new Color(0, 255, 230));
+        DrawFill(batch, pixel, knob, _dragging ? Color.White : AccentColor);
     }
 }

@@ -20,7 +20,7 @@ public sealed class Button : Widget
         var fill = !Enabled ? new Color(40, 40, 40)
                  : Hovered ? new Color(30, 70, 90)
                  : new Color(20, 40, 60);
-        var border = Enabled ? new Color(0, 200, 255) : new Color(80, 80, 80);
+        var border = Enabled ? AccentColor : new Color(80, 80, 80);
 
         DrawFill(batch, pixel, Bounds, fill);
         DrawBorder(batch, pixel, Bounds, border, 1);

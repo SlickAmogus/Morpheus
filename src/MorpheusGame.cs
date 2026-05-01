@@ -123,6 +123,28 @@ public class MorpheusGame : Game
     private string _claudeKeystorePath   = "";
     private string _deepSeekKeystorePath = "";
 
+    // Template stop texture
+    private Texture2D? _uiStopTex;
+    private Rectangle  _uiStopRect;
+
+    // Avatar-anchored action buttons (computed each frame from frameBox)
+    private Rectangle _frameBox;
+    private readonly Button _btnReplay       = new() { Label = "replay" };
+    private readonly Button _btnSummary      = new() { Label = "summary" };
+    private readonly Button _btnCustomTts    = new() { Label = "tts" };
+    private readonly Button _btnCustomPrompt = new() { Label = "prompt" };
+    private readonly Button _btnSaveFile     = new() { Label = "save file" };
+    private readonly Button _btnViewLog      = new() { Label = "view log" };
+
+    // Modals
+    private readonly CustomTtsPanel    _customTtsPanel    = new();
+    private readonly CustomPromptPanel _customPromptPanel = new();
+    private bool _showCustomTts;
+    private bool _showCustomPrompt;
+
+    // Last synthesized audio (for save-file)
+    private byte[]? _lastMp3;
+
     public MorpheusGame()
     {
         _graphics = new GraphicsDeviceManager(this)
@@ -139,6 +161,7 @@ public class MorpheusGame : Game
 
     protected override void Initialize()
     {
+        AppLogger.Initialize(AppContext.BaseDirectory);
         _settingsPath       = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
         _keystorePath       = Path.Combine(AppContext.BaseDirectory, "keystore.local.dat");
         _settings = SettingsStore.Load(_settingsPath);
@@ -286,9 +309,17 @@ public class MorpheusGame : Game
         };
         RefreshSessionsDropdown();
         _messageView.SetPages(_liveSession.Pages);
-        _messageView.ReplayClicked   += () => ReplaySpeech();
-        _messageView.StopClicked     += () => StopSpeech();
-        _messageView.SummaryClicked  += () => SummarizePage();
+        _btnReplay.Clicked       += () => { ReplaySpeech(); AppLogger.Log("replay"); };
+        _btnSummary.Clicked      += () => SummarizePage();
+        _btnCustomTts.Clicked    += OpenCustomTts;
+        _btnCustomPrompt.Clicked += OpenCustomPrompt;
+        _btnSaveFile.Clicked     += SaveAudioFile;
+        _btnViewLog.Clicked      += OpenLogFile;
+
+        _customTtsPanel.PlayClicked   += RunCustomTts;
+        _customTtsPanel.Cancelled     += () => _showCustomTts = false;
+        _customPromptPanel.Confirmed  += RunCustomPrompt;
+        _customPromptPanel.Cancelled  += () => _showCustomPrompt = false;
 
         _voicePanel.Refresh.Clicked += () =>
         {
@@ -460,6 +491,17 @@ public class MorpheusGame : Game
             if (fi is not null) { fi.HandleChar(e.Character); return; }
             return;
         }
+        if (_showCustomTts)
+        {
+            _customTtsPanel.FocusedMultiline?.HandleChar(e.Character);
+            _customTtsPanel.FocusedTextInput?.HandleChar(e.Character);
+            return;
+        }
+        if (_showCustomPrompt)
+        {
+            _customPromptPanel.FocusedMultiline?.HandleChar(e.Character);
+            return;
+        }
         foreach (var t in _voicesExtra.TextInputs)
         {
             if (!t.Focused) continue;
@@ -485,7 +527,9 @@ public class MorpheusGame : Game
         bool inputFocused = AnyTextInputFocused();
         if (Pressed(k, Keys.Escape))
         {
-            if (_showApiKeyPanel) { _showApiKeyPanel = false; _apiKeyPanel.Reset(); }
+            if (_showApiKeyPanel)   { _showApiKeyPanel = false; _apiKeyPanel.Reset(); }
+            else if (_showCustomTts)    _showCustomTts    = false;
+            else if (_showCustomPrompt) _showCustomPrompt = false;
             else if (inputFocused) DispatchKeyToFocused(Keys.Escape);
             else Exit();
         }
@@ -523,6 +567,15 @@ public class MorpheusGame : Game
             base.Update(gameTime);
             return;
         }
+        if (_showCustomTts || _showCustomPrompt)
+        {
+            var input2 = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
+            if (_showCustomTts)    _customTtsPanel.Update(input2);
+            if (_showCustomPrompt) _customPromptPanel.Update(input2);
+            _prevMouse = m;
+            base.Update(gameTime);
+            return;
+        }
         UpdateAvatarDragResize(vp, m, _prevMouse);
         UpdatePanelDragResize(m, _prevMouse);
         var input = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
@@ -539,6 +592,19 @@ public class MorpheusGame : Game
             _clearSessionsBtn.Update(input);
             _messageView.Update(m, _prevMouse);
         }
+
+        // Avatar action buttons
+        _btnReplay.Update(input);
+        _btnSummary.Update(input);
+        _btnCustomTts.Update(input);
+        _btnCustomPrompt.Update(input);
+        _btnSaveFile.Update(input);
+        _btnViewLog.Update(input);
+
+        // UI_stop click
+        bool clickedNow = m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
+        if (clickedNow && _uiStopRect.Contains(m.X, m.Y)) StopSpeech();
+
         _prevMouse = m;
 
         _avatarState.MouthOpen = _player.IsPlaying;
@@ -566,6 +632,49 @@ public class MorpheusGame : Game
             Math.Min(130, Math.Max(60, _sessionsRect.Width - 20)), 26);
 
         _voicesExtra.Layout(_voicesExtraRect.X, _voicesExtraRect.Y, _voicesExtraRect.Width);
+
+        // Compute and cache frameBox so Draw() and Update() share the same value
+        var sz = _ui.SelectedAvatar?.Manifest.Size;
+        int baseW = sz?.Width  is > 0 ? sz.Width  : 400;
+        int baseH = sz?.Height is > 0 ? sz.Height : 400;
+        int aw = _avatarSizeOverride ?? baseW;
+        int ah = (int)(aw / ((double)baseW / baseH));
+        int ax = vp.Width / 2 - aw / 2 + 60 + _avatarOffsetX;
+        int ay = 80 + _avatarOffsetY;
+        _frameBox = new Rectangle(ax, ay, aw, ah);
+
+        // Six avatar buttons in 3 column-pairs below the avatar frame
+        int btnH   = 24;
+        int btnGapY = 4;
+        int colW   = _frameBox.Width / 3;
+        int rowY   = _frameBox.Bottom + btnGapY;
+        int halfW  = colW / 2 - 2;
+
+        Button[][] pairs = [
+            [_btnReplay,    _btnSummary],
+            [_btnCustomTts, _btnCustomPrompt],
+            [_btnSaveFile,  _btnViewLog],
+        ];
+        for (int col = 0; col < 3; col++)
+        {
+            int bx = _frameBox.X + col * colW;
+            pairs[col][0].Bounds = new Rectangle(bx,           rowY, halfW, btnH);
+            pairs[col][1].Bounds = new Rectangle(bx + halfW + 4, rowY, halfW, btnH);
+        }
+
+        // UI_stop: top-right area of the message box, inset left and down slightly
+        int stopSz = Math.Clamp(_messagesRect.Height / 4, 22, 52);
+        _uiStopRect = new Rectangle(
+            _messagesRect.Right - stopSz * 2 - 4,
+            _messagesRect.Y + stopSz / 3,
+            stopSz, stopSz);
+
+        // Propagate accent to avatar buttons and modal panels
+        var accent = ActiveTint;
+        foreach (var b in new[] { _btnReplay, _btnSummary, _btnCustomTts, _btnCustomPrompt, _btnSaveFile, _btnViewLog })
+            b.AccentColor = accent;
+        _customTtsPanel.AccentColor    = accent;
+        _customPromptPanel.AccentColor = accent;
     }
 
     // Generic shape: emotion-or-clip, gap min/max, hold duration, weight.
@@ -666,18 +775,7 @@ public class MorpheusGame : Game
 
         _batch.Begin(blendState: BlendState.AlphaBlend, samplerState: SamplerState.LinearClamp);
 
-        var sz = _ui.SelectedAvatar?.Manifest.Size;
-        int baseWidth = sz?.Width is > 0 ? sz.Width : 400;
-        int baseHeight = sz?.Height is > 0 ? sz.Height : 400;
-        double aspectRatio = (double)baseWidth / baseHeight;
-
-        int aw = _avatarSizeOverride ?? baseWidth;
-        int ah = (int)(aw / aspectRatio);
-        // Center horizontally with the same +60px nudge the original layout used to
-        // clear the left voice sidebar; vertical anchor stays at y=80.
-        int ax = vp.Width / 2 - aw / 2 + 60 + _avatarOffsetX;
-        int ay = 80 + _avatarOffsetY;
-        var frameBox = new Rectangle(ax, ay, aw, ah);
+        var frameBox  = _frameBox;
         var avatarBox = Inset(frameBox, tpl?.AvatarInsets);
 
         // Inset rect that fits inside ui_avatar.png's border — used for fill, vortex and static
@@ -729,8 +827,30 @@ public class MorpheusGame : Game
             DrawResizeHandle(_voicesExtraRect);
         }
 
+        // Avatar action buttons (below avatar frame)
+        foreach (var b in new[] { _btnReplay, _btnSummary, _btnCustomTts, _btnCustomPrompt, _btnSaveFile, _btnViewLog })
+            b.Draw(_batch, _text, _pixel);
+
+        // UI_stop (right of message box)
+        if (_uiStopTex is not null)
+            _batch.Draw(_uiStopTex, _uiStopRect, ActiveTint);
+        else
+        {
+            _batch.Draw(_pixel, _uiStopRect, new Color(10, 20, 30, 210));
+            int sq = _uiStopRect.Width / 3;
+            _batch.Draw(_pixel,
+                new Rectangle(_uiStopRect.X + sq, _uiStopRect.Y + sq, sq, sq),
+                ActiveTint);
+        }
+
         if (_showApiKeyPanel)
             _apiKeyPanel.Draw(_batch, _text, _pixel);
+
+        if (_showCustomTts)
+            _customTtsPanel.Draw(_batch, _text, _pixel);
+
+        if (_showCustomPrompt)
+            _customPromptPanel.Draw(_batch, _text, _pixel);
 
         _batch.End();
         base.Draw(gameTime);
@@ -771,6 +891,7 @@ public class MorpheusGame : Game
         _messageFrame?.Dispose();
         _uiForwardTex?.Dispose();
         _uiBackwardTex?.Dispose();
+        _uiStopTex?.Dispose();
         _pixel.Dispose();
     }
 
@@ -973,7 +1094,7 @@ public class MorpheusGame : Game
             var tts = new ElevenLabsTts(_settings.ElevenLabsApiKey!, voiceSettings);
             // Prepend a soft pause to prevent ElevenLabs from clipping the first word
             var mp3 = await tts.SynthesizeAsync("… " + text, _settings.ElevenLabsVoiceId!);
-            _mainThread.Enqueue(() => _player.PlayMp3(mp3));
+            _mainThread.Enqueue(() => { _lastMp3 = mp3; _player.PlayMp3(mp3); });
         }
         catch (Exception ex)
         {
@@ -1091,6 +1212,154 @@ public class MorpheusGame : Game
             _mainThread.Enqueue(() => _ui.StatusLine = $"summary error: {ex.Message}");
         }
     }
+
+    private void OpenCustomTts()
+    {
+        var vp = GraphicsDevice.Viewport;
+        _customTtsPanel.AccentColor = ActiveTint;
+        _customTtsPanel.Layout(vp.Width / 2, vp.Height / 2);
+        var emotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions?.Keys.ToList()
+                       ?? new System.Collections.Generic.List<string>();
+        _customTtsPanel.SetEmotions(emotions);
+        _showCustomTts = true;
+        AppLogger.Log("Custom TTS panel opened");
+    }
+
+    private void OpenCustomPrompt()
+    {
+        var vp = GraphicsDevice.Viewport;
+        _customPromptPanel.AccentColor = ActiveTint;
+        _customPromptPanel.SetAvatarName(_ui.SelectedAvatar?.Manifest.Name ?? "Avatar");
+        _customPromptPanel.Layout(vp.Width / 2, vp.Height / 2);
+        _showCustomPrompt = true;
+        AppLogger.Log("Custom prompt panel opened");
+    }
+
+    private void RunCustomTts(string text, string? emotion, int repeatCount)
+    {
+        _showCustomTts = false;
+        AppLogger.Log($"Custom TTS: repeat={repeatCount}, emotion={emotion ?? "none"}, text='{Truncate(text, 60)}'");
+
+        // Add text as a new session page so it shows in the message box
+        var page = new Sessions.SessionPage { Uuid = Guid.NewGuid().ToString(), At = DateTime.UtcNow, Text = text };
+        _liveSession.Pages.Add(page);
+        Sessions.SessionStore.Save(_liveSession);
+        _messageView.SetPages(_liveSession.Pages, _liveSession.Pages.Count - 1);
+        RefreshSessionsDropdown();
+        _messageView.ResetAutoScroll();
+
+        if (emotion is not null) _avatarState.Emotion = emotion;
+        for (int i = 0; i < repeatCount; i++) EnqueueSpeech(text);
+    }
+
+    private void RunCustomPrompt(string promptText, bool useClaudeContext)
+    {
+        _showCustomPrompt = false;
+        AppLogger.Log($"Custom prompt (useContext={useClaudeContext}): '{Truncate(promptText, 80)}'");
+        _ui.StatusLine = "sending custom prompt…";
+        _ = RunCustomPromptAsync(promptText, useClaudeContext);
+    }
+
+    private async System.Threading.Tasks.Task RunCustomPromptAsync(string promptText, bool useClaudeContext)
+    {
+        try
+        {
+            var avatarName = _ui.SelectedAvatar?.Manifest.Name ?? "Avatar";
+            var desc       = _ui.SelectedAvatar?.Manifest.Description ?? "";
+
+            var ctxBlock = new System.Text.StringBuilder();
+            if (useClaudeContext && _liveSession.Pages.Count > 0)
+            {
+                ctxBlock.AppendLine("\n\nRecent session context:");
+                foreach (var pg in _liveSession.Pages.TakeLast(5))
+                    ctxBlock.AppendLine(pg.Text);
+            }
+
+            var fullPrompt =
+                $"You are {avatarName}, an AI avatar assistant. {desc}{ctxBlock}" +
+                $"\n\nUser: {promptText}\n\n" +
+                $"Respond as {avatarName}. Be concise and in character. " +
+                $"Use [emotion:name] tags where fitting (happy, excited, curious, thoughtful, sad, playful).";
+
+            string? response = _settings.SummaryProvider switch
+            {
+                AiProvider.Gemini   => await Ai.GeminiClient.PromptAsync(_settings.GeminiApiKey   ?? "", fullPrompt),
+                AiProvider.OpenAi   => await Ai.OpenAiClient.PromptAsync(_settings.OpenAiApiKey   ?? "", fullPrompt),
+                AiProvider.Claude   => await Ai.ClaudeClient.PromptAsync(_settings.ClaudeApiKey   ?? "", fullPrompt),
+                AiProvider.DeepSeek => await Ai.DeepSeekClient.PromptAsync(_settings.DeepSeekApiKey ?? "", fullPrompt),
+                _                   => await Ai.OllamaClient.PromptAsync(_ollamaModel, fullPrompt),
+            };
+
+            if (string.IsNullOrWhiteSpace(response)) response = "(no response)";
+            AppLogger.Log($"Custom prompt response: '{Truncate(response, 100)}'");
+
+            _mainThread.Enqueue(() =>
+            {
+                var page = new Sessions.SessionPage { Uuid = Guid.NewGuid().ToString(), At = DateTime.UtcNow, Text = response! };
+                _liveSession.Pages.Add(page);
+                Sessions.SessionStore.Save(_liveSession);
+                _messageView.SetPages(_liveSession.Pages, _liveSession.Pages.Count - 1);
+                RefreshSessionsDropdown();
+                _ui.StatusLine = "custom prompt complete";
+
+                var segments = ParseEmotionSegments(response!);
+                foreach (var seg in segments)
+                {
+                    if (seg.Emotion is not null) _avatarState.Emotion = seg.Emotion;
+                    if (!string.IsNullOrEmpty(seg.Text)) EnqueueSpeech(seg.Text);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Log($"Custom prompt error: {ex.Message}");
+            _mainThread.Enqueue(() => _ui.StatusLine = $"prompt error: {ex.Message}");
+        }
+    }
+
+    private void SaveAudioFile()
+    {
+        if (_lastMp3 is null || _lastMp3.Length == 0)
+        {
+            _ui.StatusLine = "no audio to save yet";
+            AppLogger.Log("Save audio: nothing to save");
+            return;
+        }
+        var filename = $"Morpheus_audio_{DateTime.Now:yyyyMMdd_HHmmss}.mp3";
+        var path = Path.Combine(AppContext.BaseDirectory, filename);
+        try
+        {
+            File.WriteAllBytes(path, _lastMp3);
+            _ui.StatusLine = $"saved: {filename}";
+            AppLogger.Log($"Audio saved: {path}");
+        }
+        catch (Exception ex)
+        {
+            _ui.StatusLine = $"save error: {ex.Message}";
+            AppLogger.Log($"Save audio error: {ex.Message}");
+        }
+    }
+
+    private void OpenLogFile()
+    {
+        var logPath = AppLogger.LogPath;
+        if (string.IsNullOrEmpty(logPath) || !File.Exists(logPath))
+        {
+            _ui.StatusLine = "no log file found";
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(logPath)
+            {
+                UseShellExecute = true,
+            });
+            AppLogger.Log("Log file opened");
+        }
+        catch (Exception ex) { _ui.StatusLine = $"can't open log: {ex.Message}"; }
+    }
+
+    private static string Truncate(string s, int n) => s.Length <= n ? s : s[..n] + "…";
 
     private void TestSpeak()
     {
@@ -1227,10 +1496,12 @@ public class MorpheusGame : Game
         _messageFrame?.Dispose();
         _uiForwardTex?.Dispose();
         _uiBackwardTex?.Dispose();
+        _uiStopTex?.Dispose();
         _avatarFrame = null;
         _messageFrame = null;
         _uiForwardTex = null;
         _uiBackwardTex = null;
+        _uiStopTex = null;
         _activeTemplate = null;
 
         if (templates.Count == 0) return;
@@ -1239,8 +1510,9 @@ public class MorpheusGame : Game
         _settings.SelectedTemplate = tpl.FolderName;
         _avatarFrame = LoadTex(Path.Combine(tpl.FolderPath, tpl.Manifest.AvatarFrame ?? ""));
         _messageFrame = LoadTex(Path.Combine(tpl.FolderPath, tpl.Manifest.MessageFrame ?? ""));
-        _uiForwardTex = LoadTex(Path.Combine(tpl.FolderPath, "uiforward.png"));
+        _uiForwardTex  = LoadTex(Path.Combine(tpl.FolderPath, "uiforward.png"));
         _uiBackwardTex = LoadTex(Path.Combine(tpl.FolderPath, "uibackward.png"));
+        _uiStopTex     = LoadTex(Path.Combine(tpl.FolderPath, "UI_stop.png"));
         if (tpl.Manifest.BackgroundColor is { } c && ParseColor(c) is { } col) _bg = col;
     }
 
@@ -1258,6 +1530,8 @@ public class MorpheusGame : Game
     private bool AnyTextInputFocused()
     {
         if (_showApiKeyPanel && _apiKeyPanel.GetFocusedInput() is not null) return true;
+        if (_showCustomTts    && (_customTtsPanel.FocusedMultiline is not null || _customTtsPanel.FocusedTextInput is not null)) return true;
+        if (_showCustomPrompt && _customPromptPanel.FocusedMultiline is not null) return true;
         foreach (var t in _voicesExtra.TextInputs)
             if (t.Focused) return true;
         return false;
@@ -1333,6 +1607,17 @@ public class MorpheusGame : Game
                 return;
             }
         }
+        if (_showCustomTts)
+        {
+            _customTtsPanel.FocusedMultiline?.HandleKey(key);
+            _customTtsPanel.FocusedTextInput?.HandleKey(key);
+            return;
+        }
+        if (_showCustomPrompt)
+        {
+            _customPromptPanel.FocusedMultiline?.HandleKey(key);
+            return;
+        }
         foreach (var t in _voicesExtra.TextInputs)
             if (t.Focused) { t.HandleKey(key); return; }
     }
@@ -1344,6 +1629,17 @@ public class MorpheusGame : Game
         {
             var fi = _apiKeyPanel.GetFocusedInput();
             if (fi is not null) { fi.HandlePaste(text); return; }
+        }
+        if (_showCustomTts)
+        {
+            if (_customTtsPanel.FocusedMultiline is { } mlt) { mlt.HandlePaste(text); return; }
+            if (_customTtsPanel.FocusedTextInput is { } fi)  { fi.HandlePaste(text);  return; }
+            return;
+        }
+        if (_showCustomPrompt)
+        {
+            _customPromptPanel.FocusedMultiline?.HandlePaste(text);
+            return;
         }
         foreach (var t in _voicesExtra.TextInputs)
             if (t.Focused) { t.HandlePaste(text); return; }

@@ -42,6 +42,21 @@ public static class VoiceService
         return results;
     }
 
+    // Returns the voice count if the key is valid, or -1 on auth failure.
+    public static async Task<int> TestKeyAsync(string apiKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) return -1;
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.elevenlabs.io/v1/voices");
+        req.Headers.Add("xi-api-key", apiKey);
+        using var resp = await http.SendAsync(req, ct);
+        if (!resp.IsSuccessStatusCode) return -1;
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("voices", out var voices)) return 0;
+        return voices.GetArrayLength();
+    }
+
     // Searches the public/community shared library. Use any returned voice_id directly
     // with /v1/text-to-speech (Creator tier and up).
     public static async Task<List<VoiceInfo>> SearchSharedAsync(

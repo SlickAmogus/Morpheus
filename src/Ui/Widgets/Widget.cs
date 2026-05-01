@@ -9,6 +9,7 @@ public abstract class Widget
     public Rectangle Bounds { get; set; }
     public bool Enabled { get; set; } = true;
     public bool Hovered { get; protected set; }
+    public Color AccentColor { get; set; } = new Color(0, 200, 255);
 
     public virtual bool HitTest(Point p) => Bounds.Contains(p);
 

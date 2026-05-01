@@ -12,6 +12,11 @@ launchSettings.json
 
 # Morpheus runtime state
 settings.local.json
+keystore.local.dat
+keystore-gemini.local.dat
+keystore-openai.local.dat
+keystore-claude.local.dat
+keystore-deepseek.local.dat
 *.env
 secrets.json
 

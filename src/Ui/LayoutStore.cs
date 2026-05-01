@@ -23,8 +23,8 @@ public sealed class LayoutConfig
     public PanelLayout Sessions    { get; set; } = new() { X = 724, Y = 140, Width = 290, Height = 110 };
     public PanelLayout VoicesExtra { get; set; } = new() { X = 734, Y = 270, Width = 270, Height = 165 };
     public PanelLayout Messages    { get; set; } = new() { X = 40,  Y = 500, Width = 944, Height = 180 };
-    public int AvatarOffsetX { get; set; } = 0;
-    public int AvatarOffsetY { get; set; } = 0;
+    public int AvatarOffsetX { get; set; } = -56;
+    public int AvatarOffsetY { get; set; } = 66;
     public int AvatarSize    { get; set; } = 0;
     public int WindowWidth   { get; set; } = 1024;
     public int WindowHeight  { get; set; } = 720;

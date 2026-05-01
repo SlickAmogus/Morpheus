@@ -127,6 +127,9 @@ public sealed class HookListener : IDisposable
 
         var first = string.IsNullOrEmpty(transcriptPath) ? null
             : TranscriptReader.ReadCurrentTurn(transcriptPath);
+
+        // Fire immediately if we already have text, but still poll briefly —
+        // Claude Code sometimes flushes final post-tool text after Stop fires.
         if (first is not null && !string.IsNullOrWhiteSpace(first.Text))
         {
             OnStop?.Invoke(new StopHookEvent
@@ -137,13 +140,17 @@ public sealed class HookListener : IDisposable
                 MessageUuid = first.Uuid,
                 Cwd = cwd,
             });
-            return;
         }
 
         _ = Task.Run(async () =>
         {
-            const int maxAttempts = 1200;  // ~5 min at 250ms per attempt
+            // If we already had text, only poll for a short late-flush window (10s).
+            // If we had nothing, poll for the full 5-min wait-for-text window.
+            int maxAttempts = first is not null && !string.IsNullOrWhiteSpace(first.Text)
+                ? 40    // 40 × 250ms = 10 seconds
+                : 1200; // 1200 × 250ms = 5 minutes
             const int delayMs = 250;
+            string? lastText = first?.Text;
             string? finalUuid = first?.Uuid;
 
             for (int attempt = 0; attempt < maxAttempts; attempt++)
@@ -152,14 +159,16 @@ public sealed class HookListener : IDisposable
                 catch (OperationCanceledException) { return; }
                 if (ct.IsCancellationRequested || string.IsNullOrEmpty(transcriptPath)) return;
 
-                if (attempt % 8 == 0)
+                if (attempt % 8 == 0 && lastText is null)
                     OnPollTick?.Invoke($"waiting for transcript… {(attempt * delayMs) / 1000}s");
 
                 var r = TranscriptReader.ReadCurrentTurn(transcriptPath);
                 if (r is null) continue;
                 if (r.Uuid is { Length: > 0 }) finalUuid = r.Uuid;
                 if (string.IsNullOrWhiteSpace(r.Text)) continue;
+                if (r.Text == lastText) continue; // nothing new
 
+                lastText = r.Text;
                 OnStop?.Invoke(new StopHookEvent
                 {
                     SessionId = sessionId,
@@ -168,18 +177,20 @@ public sealed class HookListener : IDisposable
                     MessageUuid = r.Uuid,
                     Cwd = cwd,
                 });
-                return;
             }
 
-            // No text appeared in time — tell the game loop so status is accurate.
-            OnStop?.Invoke(new StopHookEvent
+            // If we never got any text, report empty turn so the game loop updates status.
+            if (lastText is null)
             {
-                SessionId = sessionId,
-                TranscriptPath = transcriptPath,
-                AssistantMessage = null,
-                MessageUuid = finalUuid,
-                Cwd = cwd,
-            });
+                OnStop?.Invoke(new StopHookEvent
+                {
+                    SessionId = sessionId,
+                    TranscriptPath = transcriptPath,
+                    AssistantMessage = null,
+                    MessageUuid = finalUuid,
+                    Cwd = cwd,
+                });
+            }
         });
     }
 

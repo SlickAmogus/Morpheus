@@ -18,14 +18,24 @@ public sealed class VoicePanel
     public Button Save { get; } = new() { Label = "save" };
     public Button Preview { get; } = new() { Label = "preview" };
     public Button Refresh { get; } = new() { Label = "refresh" };
+    public Button Reset { get; } = new() { Label = "reset" };
 
-    public Color AccentColor { get; set; } = new Color(0, 200, 255);
+    private Color _accentColor = new Color(0, 200, 255);
+    public Color AccentColor
+    {
+        get => _accentColor;
+        set
+        {
+            _accentColor = value;
+            foreach (var w in _widgets) w.AccentColor = value;
+        }
+    }
 
     private readonly List<Widget> _widgets;
 
     public VoicePanel()
     {
-        _widgets = new List<Widget> { Voice, Refresh, Stability, Similarity, Style, SpeakerBoost, Preview, Save };
+        _widgets = new List<Widget> { Voice, Refresh, Stability, Similarity, Style, SpeakerBoost, Preview, Reset, Save };
     }
 
     public void Layout(int x, int y, int width)
@@ -38,9 +48,10 @@ public sealed class VoicePanel
         Similarity.Bounds = new Rectangle(x, cursor, width, 34);        cursor += 44;
         Style.Bounds = new Rectangle(x, cursor, width, 34);             cursor += 44;
         SpeakerBoost.Bounds = new Rectangle(x, cursor, width, 22);      cursor += 32;
-        int half = (width - 8) / 2;
-        Preview.Bounds = new Rectangle(x, cursor, half, 28);
-        Save.Bounds = new Rectangle(x + half + 8, cursor, half, 28);
+        int third = (width - 16) / 3;
+        Preview.Bounds = new Rectangle(x,                   cursor, third, 28);
+        Reset.Bounds   = new Rectangle(x + third + 8,       cursor, third, 28);
+        Save.Bounds    = new Rectangle(x + (third + 8) * 2, cursor, third, 28);
     }
 
     public void Update(WidgetInput input)
@@ -59,7 +70,7 @@ public sealed class VoicePanel
     {
         DrawPanel(batch, pixel, panelRect);
         text.DrawString(batch, "voice", new Vector2(panelRect.X + 8, panelRect.Y + 4),
-            new Color(0, 220, 255), 14);
+            AccentColor, 14);
 
         foreach (var w in _widgets)
         {

@@ -22,7 +22,17 @@ public sealed class VoicesExtraPanel
     public Dropdown  SharedResults { get; } = new();
     public Button    UseShared     { get; } = new() { Label = "use" };
 
-    public Color AccentColor { get; set; } = new Color(0, 200, 255);
+    private Color _accentColor = new Color(0, 200, 255);
+    public Color AccentColor
+    {
+        get => _accentColor;
+        set
+        {
+            _accentColor = value;
+            foreach (var w in new Widget[] { CustomName, CustomId, AddCustom, Search, SearchBtn, SharedResults, UseShared })
+                w.AccentColor = value;
+        }
+    }
 
     public IReadOnlyList<TextInput> TextInputs => new[] { CustomName, CustomId, Search };
 
@@ -61,7 +71,7 @@ public sealed class VoicesExtraPanel
         DrawPanel(batch, pixel, panelRect);
         text.DrawString(batch, "voices: custom + shared",
             new Vector2(panelRect.X + 8, panelRect.Y + 4),
-            new Color(0, 220, 255), 14);
+            AccentColor, 14);
 
         CustomName.Draw(batch, text, pixel);
         CustomId.Draw(batch, text, pixel);
