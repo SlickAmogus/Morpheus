@@ -113,6 +113,16 @@ public class MorpheusGame : Game
     private string _layoutPath = "";
     private LayoutConfig _layout = new();
 
+    // API key panel (F4)
+    private readonly ApiKeyPanel _apiKeyPanel = new();
+    private bool _showApiKeyPanel = false;
+    private string _keystorePath = "";
+    private string _ollamaModel        = "qwen3.5";
+    private string _geminiKeystorePath   = "";
+    private string _openAiKeystorePath   = "";
+    private string _claudeKeystorePath   = "";
+    private string _deepSeekKeystorePath = "";
+
     public MorpheusGame()
     {
         _graphics = new GraphicsDeviceManager(this)
@@ -129,9 +139,39 @@ public class MorpheusGame : Game
 
     protected override void Initialize()
     {
-        _settingsPath = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
+        _settingsPath       = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
+        _keystorePath       = Path.Combine(AppContext.BaseDirectory, "keystore.local.dat");
         _settings = SettingsStore.Load(_settingsPath);
         _bg = ParseColor(_settings.BackgroundColor) ?? Color.Black;
+
+        // Load ElevenLabs key; migrate from old settings.local.json if needed.
+        var storedKey = SecureKeyStore.Load(_keystorePath);
+        if (!string.IsNullOrEmpty(storedKey))
+        {
+            _settings.ElevenLabsApiKey = storedKey;
+        }
+        else if (!string.IsNullOrEmpty(_settings.ElevenLabsApiKey))
+        {
+            SecureKeyStore.Save(_keystorePath, _settings.ElevenLabsApiKey);
+            SettingsStore.Save(_settingsPath, _settings);
+        }
+
+        _geminiKeystorePath   = Path.Combine(AppContext.BaseDirectory, "keystore-gemini.local.dat");
+        _openAiKeystorePath   = Path.Combine(AppContext.BaseDirectory, "keystore-openai.local.dat");
+        _claudeKeystorePath   = Path.Combine(AppContext.BaseDirectory, "keystore-claude.local.dat");
+        _deepSeekKeystorePath = Path.Combine(AppContext.BaseDirectory, "keystore-deepseek.local.dat");
+
+        var storedGeminiKey   = SecureKeyStore.Load(_geminiKeystorePath);
+        if (!string.IsNullOrEmpty(storedGeminiKey))   _settings.GeminiApiKey   = storedGeminiKey;
+        var storedOpenAiKey   = SecureKeyStore.Load(_openAiKeystorePath);
+        if (!string.IsNullOrEmpty(storedOpenAiKey))   _settings.OpenAiApiKey   = storedOpenAiKey;
+        var storedClaudeKey   = SecureKeyStore.Load(_claudeKeystorePath);
+        if (!string.IsNullOrEmpty(storedClaudeKey))   _settings.ClaudeApiKey   = storedClaudeKey;
+        var storedDeepSeekKey = SecureKeyStore.Load(_deepSeekKeystorePath);
+        if (!string.IsNullOrEmpty(storedDeepSeekKey)) _settings.DeepSeekApiKey = storedDeepSeekKey;
+
+        // Detect Ollama model at startup (fire and forget).
+        _ = DetectOllamaModelAsync();
 
         _layoutPath = Path.Combine(AppContext.BaseDirectory, "layout.local.json");
         _layout = LayoutStore.Load(_layoutPath);
@@ -205,11 +245,13 @@ public class MorpheusGame : Game
         }
 
         ApplyAvatar();
+        _avatarOffsetX = _layout.AvatarOffsetX;
+        _avatarOffsetY = _layout.AvatarOffsetY;
+        if (_layout.AvatarSize > 0) _avatarSizeOverride = _layout.AvatarSize;
         ApplyTemplate(templates);
 
         _voicePanel.BindFromSettings(_settings);
-        _voicePanel.AccentColor  = ActiveTint;
-        _voicesExtra.AccentColor = ActiveTint;
+        ApplyAccentColor();
         _voicePanel.Save.Clicked += () =>
         {
             _voicePanel.WriteToSettings(_settings);
@@ -221,6 +263,13 @@ public class MorpheusGame : Game
             _voicePanel.WriteToSettings(_settings);
             SaveSettings();
             TestSpeak();
+        };
+        _voicePanel.Reset.Clicked += () =>
+        {
+            _voicePanel.Stability.Value  = 0.5f;
+            _voicePanel.Similarity.Value = 0.75f;
+            _voicePanel.Style.Value      = 0.0f;
+            _ui.StatusLine = "voice sliders reset to defaults";
         };
         _voicePanel.Voice.Changed += id =>
         {
@@ -237,6 +286,9 @@ public class MorpheusGame : Game
         };
         RefreshSessionsDropdown();
         _messageView.SetPages(_liveSession.Pages);
+        _messageView.ReplayClicked   += () => ReplaySpeech();
+        _messageView.StopClicked     += () => StopSpeech();
+        _messageView.SummaryClicked  += () => SummarizePage();
 
         _voicePanel.Refresh.Clicked += () =>
         {
@@ -284,6 +336,66 @@ public class MorpheusGame : Game
         };
 
         Window.TextInput += OnWindowTextInput;
+
+        // Pre-fill panel
+        _apiKeyPanel.KeyInput.Text    = _settings.ElevenLabsApiKey ?? "";
+        _apiKeyPanel.KeyInput2.Text   = KeyForProvider(_settings.SummaryProvider);
+        _apiKeyPanel.SelectedProvider = _settings.SummaryProvider;
+
+        _apiKeyPanel.WireButtons(
+            async key => await VoiceService.TestKeyAsync(key),
+            async key => await Ai.GeminiClient.TestKeyAsync(key),
+            async key => await Ai.OpenAiClient.TestKeyAsync(key),
+            async key => await Ai.ClaudeClient.TestKeyAsync(key),
+            async key => await Ai.DeepSeekClient.TestKeyAsync(key));
+
+        _apiKeyPanel.Saved += key =>
+        {
+            _settings.ElevenLabsApiKey = key;
+            SecureKeyStore.Save(_keystorePath, key);
+            _showApiKeyPanel = false;
+            _ui.StatusLine = "ElevenLabs key saved";
+            _ = LoadVoicesAsync();
+        };
+        _apiKeyPanel.GeminiSaved += key =>
+        {
+            _settings.GeminiApiKey = key;
+            SecureKeyStore.Save(_geminiKeystorePath, key);
+            _showApiKeyPanel = false;
+            _ui.StatusLine = "Gemini key saved";
+        };
+        _apiKeyPanel.OpenAiSaved += key =>
+        {
+            _settings.OpenAiApiKey = key;
+            SecureKeyStore.Save(_openAiKeystorePath, key);
+            _showApiKeyPanel = false;
+            _ui.StatusLine = "OpenAI key saved";
+        };
+        _apiKeyPanel.ClaudeSaved += key =>
+        {
+            _settings.ClaudeApiKey = key;
+            SecureKeyStore.Save(_claudeKeystorePath, key);
+            _showApiKeyPanel = false;
+            _ui.StatusLine = "Claude key saved";
+        };
+        _apiKeyPanel.DeepSeekSaved += key =>
+        {
+            _settings.DeepSeekApiKey = key;
+            SecureKeyStore.Save(_deepSeekKeystorePath, key);
+            _showApiKeyPanel = false;
+            _ui.StatusLine = "DeepSeek key saved";
+        };
+        _apiKeyPanel.ProviderChanged += p =>
+        {
+            _settings.SummaryProvider = p;
+            SaveSettings();
+            _apiKeyPanel.KeyInput2.Text = KeyForProvider(p);
+        };
+        _apiKeyPanel.Cancelled += () =>
+        {
+            _showApiKeyPanel = false;
+            _apiKeyPanel.Reset();
+        };
 
         RebuildVoiceDropdown();
         _ = LoadVoicesAsync();
@@ -342,7 +454,12 @@ public class MorpheusGame : Game
 
     private void OnWindowTextInput(object? sender, TextInputEventArgs e)
     {
-        // Dispatch printable chars to whichever input is focused; backspace/enter via key.
+        if (_showApiKeyPanel)
+        {
+            var fi = _apiKeyPanel.GetFocusedInput();
+            if (fi is not null) { fi.HandleChar(e.Character); return; }
+            return;
+        }
         foreach (var t in _voicesExtra.TextInputs)
         {
             if (!t.Focused) continue;
@@ -368,7 +485,8 @@ public class MorpheusGame : Game
         bool inputFocused = AnyTextInputFocused();
         if (Pressed(k, Keys.Escape))
         {
-            if (inputFocused) DispatchKeyToFocused(Keys.Escape);
+            if (_showApiKeyPanel) { _showApiKeyPanel = false; _apiKeyPanel.Reset(); }
+            else if (inputFocused) DispatchKeyToFocused(Keys.Escape);
             else Exit();
         }
         if (!inputFocused)
@@ -376,6 +494,7 @@ public class MorpheusGame : Game
             if (Pressed(k, Keys.F1)) InstallHooksForCwd();
             if (Pressed(k, Keys.F2)) { _ui.CycleAvatar(+1); ApplyAvatar(); SaveSettings(); }
             if (Pressed(k, Keys.F3)) { _ui.CycleTemplate(+1); ApplyTemplate(TemplateLoader.Discover(Path.Combine(AppContext.BaseDirectory, "templates"))); SaveSettings(); }
+            if (Pressed(k, Keys.F4)) { _showApiKeyPanel = !_showApiKeyPanel; if (_showApiKeyPanel) { var vp2 = GraphicsDevice.Viewport; _apiKeyPanel.Layout(vp2.Width / 2, vp2.Height / 2); _apiKeyPanel.AccentColor = ActiveTint; _apiKeyPanel.KeyInput.Text = _settings.ElevenLabsApiKey ?? ""; _apiKeyPanel.SelectedProvider = _settings.SummaryProvider; _apiKeyPanel.OllamaModelLabel = _ollamaModel; _apiKeyPanel.KeyInput2.Text = KeyForProvider(_settings.SummaryProvider); _apiKeyPanel.Reset(); } }
             if (Pressed(k, Keys.F5)) TestSpeak();
             if (Pressed(k, Keys.F6)) InstallActivePersonality();
             if (Pressed(k, Keys.F7)) CycleColor();
@@ -387,11 +506,25 @@ public class MorpheusGame : Game
             if (Pressed(k, Keys.Back))  DispatchKeyToFocused(Keys.Back);
             if (Pressed(k, Keys.Enter)) DispatchKeyToFocused(Keys.Enter);
         }
+
+        // Ctrl+V paste into focused text input (works regardless of inputFocused gating)
+        bool ctrlHeld = k.IsKeyDown(Keys.LeftControl) || k.IsKeyDown(Keys.RightControl);
+        if (ctrlHeld && Pressed(k, Keys.V))
+            DispatchPasteToFocused(Ui.Widgets.ClipboardHelper.GetText() ?? "");
+
         _prevKeys = k;
 
         var m = Mouse.GetState();
+        if (_showApiKeyPanel)
+        {
+            var input2 = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
+            _apiKeyPanel.Update(input2);
+            _prevMouse = m;
+            base.Update(gameTime);
+            return;
+        }
         UpdateAvatarDragResize(vp, m, _prevMouse);
-        if (!_compactMode) UpdatePanelDragResize(m, _prevMouse);
+        UpdatePanelDragResize(m, _prevMouse);
         var input = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
         _voicePanel.Update(input);
         // Capture Open BEFORE Update — the dropdown sets Open=false the same
@@ -573,13 +706,14 @@ public class MorpheusGame : Game
         _bgRenderer.DrawStatic(_batch, _pixel, vortexBox);
 
         // Layer 4: UI frame overlay on top of avatar
-        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, Color.White);
+        if (_avatarFrame is not null) _batch.Draw(_avatarFrame, frameBox, ActiveTint);
 
-        if (_messageFrame is not null) _batch.Draw(_messageFrame, _messagesRect, Color.White);
+        if (_messageFrame is not null) _batch.Draw(_messageFrame, _messagesRect, ActiveTint);
 
         _messageView.ForwardTex = _uiForwardTex;
         _messageView.BackwardTex = _uiBackwardTex;
         _messageView.Draw(_batch, _text, _pixel);
+        DrawResizeHandle(_messagesRect);
 
         if (!_compactMode)
         {
@@ -589,12 +723,14 @@ public class MorpheusGame : Game
             DrawSessionsPanel();
             _voicesExtra.Draw(_batch, _text, _pixel, _voicesExtraRect);
 
-            // Resize handles — small cyan squares in bottom-right of each draggable panel
+            // Resize handles for panels only visible in full mode
             DrawResizeHandle(_voiceRect);
             DrawResizeHandle(_sessionsRect);
             DrawResizeHandle(_voicesExtraRect);
-            DrawResizeHandle(_messagesRect);
         }
+
+        if (_showApiKeyPanel)
+            _apiKeyPanel.Draw(_batch, _text, _pixel);
 
         _batch.End();
         base.Draw(gameTime);
@@ -665,6 +801,7 @@ public class MorpheusGame : Game
             _currentTurnUuid = uuid;
             _spokenLen = 0;
             _avatarRenderer.RerollVariant();
+            _messageView.ResetAutoScroll();
         }
 
         // Parse emotion tags and create (emotion, text) segments for real-time emotion switching
@@ -856,6 +993,105 @@ public class MorpheusGame : Game
         PlayTemplateSound(e.Phase == "pre" ? "tool_start" : "tool_end");
     }
 
+    private void StopSpeech()
+    {
+        _player.Stop();
+        _speechQueue.Clear();
+        _speechActive = false;
+        _ui.StatusLine = "stopped";
+    }
+
+    private void ReplaySpeech()
+    {
+        StopSpeech();
+        var pageText = _messageView.CurrentText;
+        if (string.IsNullOrWhiteSpace(pageText)) { _ui.StatusLine = "nothing to replay"; return; }
+        _messageView.ResetAutoScroll();
+        EnqueueSpeech(pageText);
+        _ui.StatusLine = "replaying…";
+    }
+
+    private async System.Threading.Tasks.Task DetectOllamaModelAsync()
+    {
+        var model = await Ai.OllamaClient.GetFirstModelAsync();
+        if (model is not null)
+            _mainThread.Enqueue(() =>
+            {
+                _ollamaModel = model;
+                _apiKeyPanel.OllamaModelLabel = model;
+            });
+    }
+
+    private void SummarizePage()
+    {
+        var pageText = _messageView.CurrentText;
+        if (string.IsNullOrWhiteSpace(pageText)) { _ui.StatusLine = "nothing to summarize"; return; }
+        if (_settings.SummaryProvider != AiProvider.Ollama
+            && string.IsNullOrWhiteSpace(KeyForProvider(_settings.SummaryProvider)))
+        {
+            var name = _settings.SummaryProvider.ToString();
+            _ui.StatusLine = $"no {name} key — press F4 to add it";
+            return;
+        }
+        var label = _settings.SummaryProvider switch
+        {
+            AiProvider.Gemini   => "Gemini",
+            AiProvider.OpenAi   => "OpenAI",
+            AiProvider.Claude   => "Claude",
+            AiProvider.DeepSeek => "DeepSeek",
+            _                   => _ollamaModel,
+        };
+        _ui.StatusLine = $"summarizing via {label}…";
+        _ = SummarizePageAsync(pageText);
+    }
+
+    private async System.Threading.Tasks.Task SummarizePageAsync(string pageText)
+    {
+        try
+        {
+            var summary = _settings.SummaryProvider switch
+            {
+                AiProvider.Gemini   => await Ai.GeminiClient.SummarizeAsync(_settings.GeminiApiKey!, pageText),
+                AiProvider.OpenAi   => await Ai.OpenAiClient.SummarizeAsync(_settings.OpenAiApiKey!, pageText),
+                AiProvider.Claude   => await Ai.ClaudeClient.SummarizeAsync(_settings.ClaudeApiKey!, pageText),
+                AiProvider.DeepSeek => await Ai.DeepSeekClient.SummarizeAsync(_settings.DeepSeekApiKey!, pageText),
+                _                   => await Ai.OllamaClient.SummarizeAsync(_ollamaModel, pageText),
+            };
+            if (string.IsNullOrWhiteSpace(summary))
+            {
+                _mainThread.Enqueue(() => _ui.StatusLine = "summary failed");
+                return;
+            }
+            _mainThread.Enqueue(() =>
+            {
+                _ui.StatusLine = "summary ready";
+                StopSpeech();
+                var segments    = ParseEmotionSegments(summary);
+                var summaryText = string.Concat(System.Linq.Enumerable.Select(segments, s => s.Text));
+                foreach (var seg in segments)
+                {
+                    if (seg.Emotion is not null)
+                    {
+                        _avatarState.Emotion = seg.Emotion;
+                        if (seg.Emotion != _lastSoundEmotion)
+                        {
+                            PlayTemplateSound(seg.Emotion);
+                            _lastSoundEmotion = seg.Emotion;
+                        }
+                    }
+                    if (!string.IsNullOrEmpty(seg.Text))
+                        EnqueueSpeech(seg.Text);
+                }
+                if (!string.IsNullOrWhiteSpace(summaryText))
+                    _messageView.SetSummaryForCurrentPage(summaryText);
+            });
+        }
+        catch (Exception ex)
+        {
+            _mainThread.Enqueue(() => _ui.StatusLine = $"summary error: {ex.Message}");
+        }
+    }
+
     private void TestSpeak()
     {
         if (!string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)
@@ -1021,6 +1257,7 @@ public class MorpheusGame : Game
 
     private bool AnyTextInputFocused()
     {
+        if (_showApiKeyPanel && _apiKeyPanel.GetFocusedInput() is not null) return true;
         foreach (var t in _voicesExtra.TextInputs)
             if (t.Focused) return true;
         return false;
@@ -1086,8 +1323,30 @@ public class MorpheusGame : Game
 
     private void DispatchKeyToFocused(Keys key)
     {
+        if (_showApiKeyPanel)
+        {
+            var fi = _apiKeyPanel.GetFocusedInput();
+            if (fi is not null)
+            {
+                if (key == Keys.Escape) { _showApiKeyPanel = false; _apiKeyPanel.Reset(); return; }
+                fi.HandleKey(key);
+                return;
+            }
+        }
         foreach (var t in _voicesExtra.TextInputs)
             if (t.Focused) { t.HandleKey(key); return; }
+    }
+
+    private void DispatchPasteToFocused(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        if (_showApiKeyPanel)
+        {
+            var fi = _apiKeyPanel.GetFocusedInput();
+            if (fi is not null) { fi.HandlePaste(text); return; }
+        }
+        foreach (var t in _voicesExtra.TextInputs)
+            if (t.Focused) { t.HandlePaste(text); return; }
     }
 
     private static Color? ParseColor(string? s)
@@ -1153,8 +1412,10 @@ public class MorpheusGame : Game
         if (m.LeftButton != ButtonState.Pressed || prevM.LeftButton != ButtonState.Released) return;
         if (_avatarDragging || _avatarResizing) return;
 
-        // Check panels in reverse draw order so topmost panel wins
-        DragPanel[] order = { DragPanel.VoicesExtra, DragPanel.Sessions, DragPanel.Voice, DragPanel.Messages };
+        // In compact mode only the message box is interactive
+        DragPanel[] order = _compactMode
+            ? new[] { DragPanel.Messages }
+            : new[] { DragPanel.VoicesExtra, DragPanel.Sessions, DragPanel.Voice, DragPanel.Messages };
         foreach (var panel in order)
         {
             var rect = GetPanelRect(panel);
@@ -1216,13 +1477,21 @@ public class MorpheusGame : Game
         SaveLayout();
     }
 
+    private void ApplyAccentColor()
+    {
+        _voicePanel.AccentColor     = ActiveTint;
+        _voicesExtra.AccentColor    = ActiveTint;
+        _sessionsDropdown.AccentColor = ActiveTint;
+        _clearSessionsBtn.AccentColor = ActiveTint;
+        _messageView.AccentColor    = ActiveTint;
+        _apiKeyPanel.AccentColor    = ActiveTint;
+    }
+
     private void CycleColor()
     {
         _layout.ColorIndex = (_layout.ColorIndex + 1) % Palette.Length;
-        var name = Palette[_layout.ColorIndex].Name;
-        _voicePanel.AccentColor  = ActiveTint;
-        _voicesExtra.AccentColor = ActiveTint;
-        _ui.StatusLine = $"color: {name}";
+        ApplyAccentColor();
+        _ui.StatusLine = $"color: {Palette[_layout.ColorIndex].Name}";
         SaveLayout();
     }
 
@@ -1233,8 +1502,8 @@ public class MorpheusGame : Game
         _sessionsRect    = new Rectangle(vp.Width - 300, 140, 290, 110);
         _voicesExtraRect = new Rectangle(vp.Width - 290, 270, 270, 165);
         _messagesRect    = new Rectangle(40, vp.Height - 220, vp.Width - 80, 180);
-        _avatarOffsetX   = 0;
-        _avatarOffsetY   = 0;
+        _avatarOffsetX   = -56;
+        _avatarOffsetY   = 66;
         _avatarSizeOverride = null;
         SaveLayout();
         _ui.StatusLine = "layout reset";
@@ -1251,6 +1520,15 @@ public class MorpheusGame : Game
         if (string.IsNullOrEmpty(file)) return;
         Audio.SoundEffectPlayer.Play(Path.Combine(folder, file));
     }
+
+    private string KeyForProvider(AiProvider p) => p switch
+    {
+        AiProvider.Gemini   => _settings.GeminiApiKey   ?? "",
+        AiProvider.OpenAi   => _settings.OpenAiApiKey   ?? "",
+        AiProvider.Claude   => _settings.ClaudeApiKey   ?? "",
+        AiProvider.DeepSeek => _settings.DeepSeekApiKey ?? "",
+        _                   => "",
+    };
 
     private static string Short(string s) => s.Length <= 8 ? s : s[..8];
 

@@ -11,19 +11,31 @@ namespace Morpheus.Ui;
 // Paged reader for session pages (one page = one assistant turn).
 // Inside the message box: scrollable text + right-edge scrollbar.
 // Outside (sides of the box): prev/next nav buttons from template assets.
+// Top bar: replay (left) and stop (right) overlay buttons.
 public sealed class MessageView
 {
     public List<SessionPage> Pages { get; set; } = new();
     public int PageIndex { get; private set; }
     public event Action<int>? PageChanged;
+    public event Action? ReplayClicked;
+    public event Action? SummaryClicked;
+    public event Action? StopClicked;
 
     public Texture2D? ForwardTex { get; set; }
     public Texture2D? BackwardTex { get; set; }
 
-    private float _scroll;          // 0..1 within current page
+    // Overlay button sizes — set before calling Layout().
+    public int ReplayBtnWidth   { get; set; } = 52;
+    public int SummaryBtnWidth  { get; set; } = 66;
+    public int StopBtnWidth     { get; set; } = 52;
+    public int OverlayBtnHeight { get; set; } = 20;
+
+    private float _scroll;
     private bool _dragging;
     private int _prevWheel;
     private bool _wheelInitialized;
+    private bool _userScrolled;
+    private int _prevTotalLines;
 
     private Rectangle _box;
     private Insets? _insets;
@@ -33,10 +45,33 @@ public sealed class MessageView
     private Rectangle _backBtn;
     private Rectangle _forwardBtn;
     private Rectangle _pageLabelRect;
+    private Rectangle _replayBtn;
+    private Rectangle _summaryBtn;
+    private Rectangle _stopBtn;
     private int _textSize = 16;
     private int _lineHeight = 20;
     private int _totalLines;
     private int _visibleLines;
+
+    // Per-page summaries keyed by SessionPage.Uuid; persist until overwritten by a new summary.
+    private readonly System.Collections.Generic.Dictionary<string, string> _summaries = new();
+
+    public void SetSummaryForCurrentPage(string summary)
+    {
+        var uuid = (PageIndex >= 0 && PageIndex < Pages.Count) ? Pages[PageIndex].Uuid : null;
+        if (uuid is not null) _summaries[uuid] = summary;
+    }
+
+    private string? CurrentSummary
+    {
+        get
+        {
+            var uuid = (PageIndex >= 0 && PageIndex < Pages.Count) ? Pages[PageIndex].Uuid : null;
+            return uuid is not null && _summaries.TryGetValue(uuid, out var s) ? s : null;
+        }
+    }
+
+    public Color AccentColor { get; set; } = new Color(0, 200, 255);
 
     public string CurrentText =>
         (PageIndex >= 0 && PageIndex < Pages.Count) ? Pages[PageIndex].Text : "";
@@ -60,7 +95,22 @@ public sealed class MessageView
         if (clamped == PageIndex) return;
         PageIndex = clamped;
         _scroll = 0;
+        _userScrolled = false;
         PageChanged?.Invoke(PageIndex);
+    }
+
+    // Call when a new assistant turn begins — lets auto-scroll take over until the user touches scroll.
+    public void ResetAutoScroll()
+    {
+        _userScrolled = false;
+        _prevTotalLines = 0;
+    }
+
+    // Call when live text grows — scrolls to bottom if user hasn't manually scrolled.
+    public void NotifyTextUpdated()
+    {
+        if (!_userScrolled)
+            _scroll = 1f;
     }
 
     public void Layout(Rectangle box, Insets? insets, int textSize, int lineHeight,
@@ -73,8 +123,16 @@ public sealed class MessageView
 
         var interior = InsetRect(box, insets);
         const int scrollbarW = 10;
-        _scrollbarTrack = new Rectangle(interior.Right - scrollbarW, interior.Y, scrollbarW, interior.Height);
-        _textArea = new Rectangle(interior.X, interior.Y, interior.Width - scrollbarW - 6, interior.Height);
+        int overlayH = OverlayBtnHeight + 4; // strip height including gap
+
+        // Overlay buttons sit at the top of the interior
+        _replayBtn  = new Rectangle(interior.X + 2,                                        interior.Y + 2, ReplayBtnWidth,  OverlayBtnHeight);
+        _summaryBtn = new Rectangle(interior.X + 2 + ReplayBtnWidth + 4,                   interior.Y + 2, SummaryBtnWidth, OverlayBtnHeight);
+        _stopBtn    = new Rectangle(interior.Right - scrollbarW - StopBtnWidth - 4,         interior.Y + 2, StopBtnWidth,    OverlayBtnHeight);
+
+        // Text area and scrollbar start below the overlay strip
+        _scrollbarTrack = new Rectangle(interior.Right - scrollbarW, interior.Y + overlayH, scrollbarW, interior.Height - overlayH);
+        _textArea = new Rectangle(interior.X, interior.Y + overlayH, interior.Width - scrollbarW - 6, interior.Height - overlayH);
 
         int by = box.Y + (box.Height - btnSize) / 2;
         _backBtn    = new Rectangle(box.X - btnSize - btnSideGap, by, btnSize, btnSize);
@@ -89,7 +147,10 @@ public sealed class MessageView
         int wheelDelta = m.ScrollWheelValue - _prevWheel;
         _prevWheel = m.ScrollWheelValue;
         if (wheelDelta != 0 && _box.Contains(m.X, m.Y))
+        {
+            _userScrolled = true;
             ApplyScrollLines(-wheelDelta / 120f * 3f);
+        }
 
         bool clickNow = m.LeftButton == ButtonState.Pressed && prev.LeftButton == ButtonState.Released;
         bool releaseNow = m.LeftButton == ButtonState.Released && prev.LeftButton == ButtonState.Pressed;
@@ -98,14 +159,17 @@ public sealed class MessageView
 
         if (clickNow)
         {
+            if (_replayBtn.Contains(p))  { ReplayClicked?.Invoke();   return; }
+            if (_summaryBtn.Contains(p)) { SummaryClicked?.Invoke(); return; }
+            if (_stopBtn.Contains(p))    { StopClicked?.Invoke();    return; }
             if (_backBtn.Contains(p))    { GoTo(PageIndex - 1); return; }
             if (_forwardBtn.Contains(p)) { GoTo(PageIndex + 1); return; }
-            if (_scrollbarThumb.Contains(p)) _dragging = true;
+            if (_scrollbarThumb.Contains(p)) { _dragging = true; _userScrolled = true; }
             else if (_scrollbarTrack.Contains(p))
-                SetScrollFromY(m.Y);
+            { SetScrollFromY(m.Y); _userScrolled = true; }
         }
         if (releaseNow) _dragging = false;
-        if (down && _dragging) SetScrollFromY(m.Y);
+        if (down && _dragging) { SetScrollFromY(m.Y); _userScrolled = true; }
     }
 
     private void SetScrollFromY(int mouseY)
@@ -125,9 +189,37 @@ public sealed class MessageView
 
     public void Draw(SpriteBatch batch, TextRenderer text, Texture2D pixel)
     {
+        // ── Summary header (fixed, non-scrolling) ──────────────────────────
+        int contentY = _textArea.Y;
+        if (!string.IsNullOrEmpty(CurrentSummary))
+        {
+            var summaryColor = new Color((int)AccentColor.R, (int)AccentColor.G, (int)AccentColor.B, 220);
+            var summaryLines = WrapLines(text, "Summary: " + CurrentSummary, _textArea.Width, _textSize);
+            foreach (var sl in summaryLines)
+            {
+                if (contentY + _lineHeight > _textArea.Bottom) break;
+                text.DrawString(batch, sl, new Vector2(_textArea.X, contentY), summaryColor, _textSize);
+                contentY += _lineHeight;
+            }
+            int sepY = contentY + 2;
+            if (sepY < _textArea.Bottom)
+            {
+                batch.Draw(pixel, new Rectangle(_textArea.X, sepY, _textArea.Width, 1),
+                    new Color((int)AccentColor.R / 2, (int)AccentColor.G / 2, (int)AccentColor.B / 2, 160));
+                contentY = sepY + 6;
+            }
+        }
+
+        // ── Page content (scrollable, below any summary header) ───────────
+        int contentHeight = Math.Max(0, _textArea.Bottom - contentY);
         var lines = WrapLines(text, CurrentText, _textArea.Width, _textSize);
-        _totalLines = lines.Count;
-        _visibleLines = Math.Max(1, _textArea.Height / _lineHeight);
+        _totalLines   = lines.Count;
+        _visibleLines = Math.Max(1, contentHeight / _lineHeight);
+
+        // Auto-scroll when new lines arrive and user hasn't manually scrolled
+        if (!_userScrolled && _totalLines > _prevTotalLines && _totalLines > _visibleLines)
+            _scroll = 1f;
+        _prevTotalLines = _totalLines;
 
         int startLine = 0;
         if (_totalLines > _visibleLines)
@@ -138,7 +230,7 @@ public sealed class MessageView
         for (int i = 0; i < _visibleLines && startLine + i < lines.Count; i++)
         {
             text.DrawString(batch, lines[startLine + i],
-                new Vector2(_textArea.X, _textArea.Y + i * _lineHeight),
+                new Vector2(_textArea.X, contentY + i * _lineHeight),
                 Color.White, _textSize);
         }
 
@@ -154,7 +246,7 @@ public sealed class MessageView
         {
             _scrollbarThumb = _scrollbarTrack;
         }
-        batch.Draw(pixel, _scrollbarThumb, new Color(0, 200, 255, 200));
+        batch.Draw(pixel, _scrollbarThumb, new Color((int)AccentColor.R, (int)AccentColor.G, (int)AccentColor.B, 200));
 
         if (Pages.Count > 0)
         {
@@ -166,11 +258,29 @@ public sealed class MessageView
             text.DrawString(batch, label, pos, new Color(160, 200, 220), 12);
         }
 
-        DrawNav(batch, pixel, _backBtn,    BackwardTex, PageIndex > 0);
-        DrawNav(batch, pixel, _forwardBtn, ForwardTex,  PageIndex < Pages.Count - 1);
+        DrawNav(batch, pixel, _backBtn,    BackwardTex, PageIndex > 0,                AccentColor);
+        DrawNav(batch, pixel, _forwardBtn, ForwardTex,  PageIndex < Pages.Count - 1, AccentColor);
+
+        DrawOverlayBtn(batch, text, pixel, _replayBtn,  "replay",   AccentColor);
+        DrawOverlayBtn(batch, text, pixel, _summaryBtn, "summary", AccentColor);
+        DrawOverlayBtn(batch, text, pixel, _stopBtn,    "stop",    AccentColor);
     }
 
-    private static void DrawNav(SpriteBatch batch, Texture2D pixel, Rectangle r, Texture2D? tex, bool enabled)
+    private static void DrawOverlayBtn(SpriteBatch batch, TextRenderer text, Texture2D pixel,
+        Rectangle r, string label, Color accent)
+    {
+        batch.Draw(pixel, r, new Color(10, 20, 30, 210));
+        batch.Draw(pixel, new Rectangle(r.X, r.Y,          r.Width, 1), accent);
+        batch.Draw(pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), accent);
+        batch.Draw(pixel, new Rectangle(r.X, r.Y, 1,          r.Height), accent);
+        batch.Draw(pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), accent);
+        var sz = text.Measure(label, 12);
+        text.DrawString(batch, label,
+            new Vector2(r.X + (r.Width - sz.X) / 2f, r.Y + (r.Height - sz.Y) / 2f - 1),
+            Color.White, 12);
+    }
+
+    private static void DrawNav(SpriteBatch batch, Texture2D pixel, Rectangle r, Texture2D? tex, bool enabled, Color accent)
     {
         var tint = enabled ? Color.White : new Color(120, 120, 120, 180);
         if (tex is not null)
@@ -179,7 +289,7 @@ public sealed class MessageView
             return;
         }
         batch.Draw(pixel, r, enabled ? new Color(20, 40, 60) : new Color(20, 20, 20));
-        var border = enabled ? new Color(0, 200, 255) : new Color(80, 80, 80);
+        var border = enabled ? accent : new Color(80, 80, 80);
         batch.Draw(pixel, new Rectangle(r.X, r.Y, r.Width, 1), border);
         batch.Draw(pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), border);
         batch.Draw(pixel, new Rectangle(r.X, r.Y, 1, r.Height), border);
