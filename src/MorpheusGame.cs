@@ -111,6 +111,12 @@ public class MorpheusGame : Game
     private Point _panelDragStartMouse;
     private Rectangle _panelDragStartRect;
 
+    // Panel collapse state
+    private bool _voiceCollapsed      = false;
+    private bool _sessionsCollapsed   = false;
+    private bool _voicesExtraCollapsed = false;
+    private const int CollapsedW = 20;
+
     // Layout persistence (now part of ProjectConfig / morpheus.cfg in working dir)
 
     // API key panel (F4)
@@ -587,19 +593,34 @@ public class MorpheusGame : Game
             return;
         }
         UpdateAvatarDragResize(vp, m, _prevMouse);
-        UpdatePanelDragResize(m, _prevMouse);
+
+        // Collapse button click detection — must run before drag/resize so the
+        // collapse strip doesn't accidentally start a panel drag.
+        bool collapseClicked = false;
+        {
+            bool clickNow2 = m.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
+            if (clickNow2)
+            {
+                var mp2 = new Point(m.X, m.Y);
+                if (VoiceCollapseBtn().Contains(mp2))      { _voiceCollapsed      = !_voiceCollapsed;      collapseClicked = true; }
+                else if (SessionsCollapseBtn().Contains(mp2))   { _sessionsCollapsed   = !_sessionsCollapsed;   collapseClicked = true; }
+                else if (VoicesExtraCollapseBtn().Contains(mp2)) { _voicesExtraCollapsed = !_voicesExtraCollapsed; collapseClicked = true; }
+            }
+        }
+        if (!collapseClicked) UpdatePanelDragResize(m, _prevMouse);
+
         var input = new WidgetInput { Mouse = m, PrevMouse = _prevMouse };
-        _voicePanel.Update(input);
+        if (!_voiceCollapsed) _voicePanel.Update(input);
         // Capture Open BEFORE Update — the dropdown sets Open=false the same
         // frame it consumes a row click, so checking after lets that click
         // fall through to widgets sitting under the open list.
-        bool sessionsListWasOpen = _sessionsDropdown.Open;
-        _sessionsDropdown.Update(input);
-        bool sharedListWasOpen = _voicesExtra.SharedResults.Open;
-        _voicesExtra.Update(input);
+        bool sessionsListWasOpen = !_sessionsCollapsed && _sessionsDropdown.Open;
+        if (!_sessionsCollapsed) _sessionsDropdown.Update(input);
+        bool sharedListWasOpen = !_voicesExtraCollapsed && _voicesExtra.SharedResults.Open;
+        if (!_voicesExtraCollapsed) _voicesExtra.Update(input);
         if (!sessionsListWasOpen && !sharedListWasOpen)
         {
-            _clearSessionsBtn.Update(input);
+            if (!_sessionsCollapsed) _clearSessionsBtn.Update(input);
             _messageView.Update(m, _prevMouse);
         }
 
@@ -827,14 +848,51 @@ public class MorpheusGame : Game
         {
             _ui.Draw(_batch, _text, vp, ActiveTint);
 
-            _voicePanel.Draw(_batch, _text, _pixel, _voiceRect);
-            DrawSessionsPanel();
-            _voicesExtra.Draw(_batch, _text, _pixel, _voicesExtraRect);
+            if (!_voiceCollapsed)
+            {
+                _voicePanel.Draw(_batch, _text, _pixel, _voiceRect);
+                DrawResizeHandle(_voiceRect);
+            }
+            else
+            {
+                // Collapsed voice: draw thin background strip
+                var cs = new Rectangle(_voiceRect.X, _voiceRect.Y, CollapsedW, _voiceRect.Height);
+                _batch.Draw(_pixel, cs, new Color(0, 10, 20, 180));
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Y,          cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Bottom - 1, cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.Right - 1, cs.Y,  1, cs.Height), ActiveTint);
+            }
+            DrawCollapseBtn(VoiceCollapseBtn(), _voiceCollapsed); // ► expand / ◄ collapse
 
-            // Resize handles for panels only visible in full mode
-            DrawResizeHandle(_voiceRect);
-            DrawResizeHandle(_sessionsRect);
-            DrawResizeHandle(_voicesExtraRect);
+            if (!_sessionsCollapsed)
+            {
+                DrawSessionsPanel();
+                DrawResizeHandle(_sessionsRect);
+            }
+            else
+            {
+                var cs = new Rectangle(_sessionsRect.Right - CollapsedW, _sessionsRect.Y, CollapsedW, _sessionsRect.Height);
+                _batch.Draw(_pixel, cs, new Color(0, 10, 20, 180));
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Y,          cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Bottom - 1, cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Y,          1, cs.Height), ActiveTint);
+            }
+            DrawCollapseBtn(SessionsCollapseBtn(), !_sessionsCollapsed); // ► collapse / ◄ expand
+
+            if (!_voicesExtraCollapsed)
+            {
+                _voicesExtra.Draw(_batch, _text, _pixel, _voicesExtraRect);
+                DrawResizeHandle(_voicesExtraRect);
+            }
+            else
+            {
+                var cs = new Rectangle(_voicesExtraRect.Right - CollapsedW, _voicesExtraRect.Y, CollapsedW, _voicesExtraRect.Height);
+                _batch.Draw(_pixel, cs, new Color(0, 10, 20, 180));
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Y,          cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Bottom - 1, cs.Width, 1), ActiveTint);
+                _batch.Draw(_pixel, new Rectangle(cs.X, cs.Y,          1, cs.Height), ActiveTint);
+            }
+            DrawCollapseBtn(VoicesExtraCollapseBtn(), !_voicesExtraCollapsed); // ► collapse / ◄ expand
         }
 
         // Avatar action buttons (below avatar frame)
@@ -1753,6 +1811,11 @@ public class MorpheusGame : Game
             : new[] { DragPanel.VoicesExtra, DragPanel.Sessions, DragPanel.Voice, DragPanel.Messages };
         foreach (var panel in order)
         {
+            // Collapsed panels respond only to the collapse button click (handled before this method)
+            if (panel == DragPanel.Voice       && _voiceCollapsed)      continue;
+            if (panel == DragPanel.Sessions    && _sessionsCollapsed)   continue;
+            if (panel == DragPanel.VoicesExtra && _voicesExtraCollapsed) continue;
+
             var rect = GetPanelRect(panel);
             bool nearCorner = mouseP.X >= rect.Right  - 20 && mouseP.Y >= rect.Bottom - 20
                            && mouseP.X <  rect.Right  + 5  && mouseP.Y <  rect.Bottom + 5;
@@ -1791,6 +1854,51 @@ public class MorpheusGame : Game
         var t = ActiveTint;
         _batch.Draw(_pixel, new Rectangle(rect.Right - 8, rect.Bottom - 8, 6, 6),
             new Color((int)t.R, (int)t.G, (int)t.B, 160));
+    }
+
+    // Returns the clickable collapse/expand button rect for each panel.
+    // Collapsed: the entire thin strip. Expanded: a small tab at the panel edge.
+    private Rectangle VoiceCollapseBtn()
+    {
+        if (_voiceCollapsed) return new Rectangle(_voiceRect.X, _voiceRect.Y, CollapsedW, _voiceRect.Height);
+        int tabH = Math.Clamp(_voiceRect.Height / 3, 30, 60);
+        return new Rectangle(_voiceRect.Right - CollapsedW, _voiceRect.Y + (_voiceRect.Height - tabH) / 2, CollapsedW, tabH);
+    }
+    private Rectangle SessionsCollapseBtn()
+    {
+        if (_sessionsCollapsed) return new Rectangle(_sessionsRect.Right - CollapsedW, _sessionsRect.Y, CollapsedW, _sessionsRect.Height);
+        int tabH = Math.Clamp(_sessionsRect.Height / 3, 30, 60);
+        return new Rectangle(_sessionsRect.X, _sessionsRect.Y + (_sessionsRect.Height - tabH) / 2, CollapsedW, tabH);
+    }
+    private Rectangle VoicesExtraCollapseBtn()
+    {
+        if (_voicesExtraCollapsed) return new Rectangle(_voicesExtraRect.Right - CollapsedW, _voicesExtraRect.Y, CollapsedW, _voicesExtraRect.Height);
+        int tabH = Math.Clamp(_voicesExtraRect.Height / 3, 30, 60);
+        return new Rectangle(_voicesExtraRect.X, _voicesExtraRect.Y + (_voicesExtraRect.Height - tabH) / 2, CollapsedW, tabH);
+    }
+
+    // Draws the collapse/expand tab background + border + chevron arrow.
+    // pointRight=true → ► (expand/right), false → ◄ (collapse/left).
+    private void DrawCollapseBtn(Rectangle r, bool pointRight)
+    {
+        var tint = ActiveTint;
+        _batch.Draw(_pixel, r, new Color(0, 24, 40, 220));
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Y,          r.Width, 1), tint);
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Bottom - 1, r.Width, 1), tint);
+        _batch.Draw(_pixel, new Rectangle(r.X, r.Y, 1,          r.Height), tint);
+        _batch.Draw(_pixel, new Rectangle(r.Right - 1, r.Y, 1, r.Height), tint);
+        DrawChevron(r.X + r.Width / 2 - 2, r.Y + r.Height / 2 - 4, pointRight, tint);
+    }
+
+    // Draws a 4×8 pixel chevron. pointRight=true: ►, false: ◄.
+    private void DrawChevron(int cx, int cy, bool pointRight, Color color)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            int col  = pointRight ? i : (3 - i);
+            int rowH = 8 - i * 2;
+            _batch.Draw(_pixel, new Rectangle(cx + col, cy + i, 1, rowH), color);
+        }
     }
 
     private void SaveLayout()
