@@ -89,22 +89,22 @@ public sealed class VoicePanel
         Voice.SelectById(selectId);
     }
 
-    public void BindFromSettings(Morpheus.Ui.MorpheusSettings s)
+    public void BindFromSettings(ProjectConfig p)
     {
-        Stability.Value = s.VoiceStability;
-        Similarity.Value = s.VoiceSimilarity;
-        Style.Value = s.VoiceStyle;
-        SpeakerBoost.Value = s.VoiceSpeakerBoost;
-        Voice.SelectById(s.ElevenLabsVoiceId);
+        Stability.Value = p.VoiceStability;
+        Similarity.Value = p.VoiceSimilarity;
+        Style.Value = p.VoiceStyle;
+        SpeakerBoost.Value = p.VoiceSpeakerBoost;
+        Voice.SelectById(p.ElevenLabsVoiceId);
     }
 
-    public void WriteToSettings(Morpheus.Ui.MorpheusSettings s)
+    public void WriteToSettings(ProjectConfig p)
     {
-        s.VoiceStability = Stability.Value;
-        s.VoiceSimilarity = Similarity.Value;
-        s.VoiceStyle = Style.Value;
-        s.VoiceSpeakerBoost = SpeakerBoost.Value;
-        if (Voice.SelectedId is { Length: > 0 } id) s.ElevenLabsVoiceId = id;
+        p.VoiceStability = Stability.Value;
+        p.VoiceSimilarity = Similarity.Value;
+        p.VoiceStyle = Style.Value;
+        p.VoiceSpeakerBoost = SpeakerBoost.Value;
+        if (Voice.SelectedId is { Length: > 0 } id) p.ElevenLabsVoiceId = id;
     }
 
     private void DrawPanel(SpriteBatch b, Texture2D px, Rectangle r)

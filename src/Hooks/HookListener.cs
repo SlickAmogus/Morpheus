@@ -20,6 +20,7 @@ public sealed class HookListener : IDisposable
 
     public int Port { get; private set; }
     public string? BoundSessionId { get; private set; }
+    public string? FilterCwd { get; set; }
 
     public event Action<StopHookEvent>? OnStop;
     public event Action<ToolHookEvent>? OnTool;
@@ -109,7 +110,7 @@ public sealed class HookListener : IDisposable
     {
         var env = Parse(body);
         if (env is null) return;
-        if (!LockOrIgnore(env.SessionId)) return;
+        if (!LockOrIgnore(env.SessionId, env.Cwd)) return;
 
         var sessionId = env.SessionId ?? "";
         var transcriptPath = env.TranscriptPath;
@@ -198,7 +199,7 @@ public sealed class HookListener : IDisposable
     {
         var env = Parse(body);
         if (env is null) return;
-        if (!LockOrIgnore(env.SessionId)) return;
+        if (!LockOrIgnore(env.SessionId, env.Cwd)) return;
 
         OnTool?.Invoke(new ToolHookEvent
         {
@@ -228,8 +229,17 @@ public sealed class HookListener : IDisposable
         }
     }
 
-    private bool LockOrIgnore(string? sessionId)
+    private bool LockOrIgnore(string? sessionId, string? cwd)
     {
+        // CWD filter: ignore events from sessions in different directories
+        if (FilterCwd is not null && cwd is not null)
+        {
+            var normFilter = Path.GetFullPath(FilterCwd).TrimEnd('/', '\\', Path.DirectorySeparatorChar);
+            var normCwd    = Path.GetFullPath(cwd).TrimEnd('/', '\\', Path.DirectorySeparatorChar);
+            if (!string.Equals(normFilter, normCwd, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
         if (string.IsNullOrEmpty(sessionId)) return false;
 
         _lastActivityTime = DateTime.UtcNow;

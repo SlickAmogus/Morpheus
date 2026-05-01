@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,18 +14,9 @@ public sealed class CustomVoice
 
 public sealed class MorpheusSettings
 {
-    public string? SelectedAvatar { get; set; }
-    public string? SelectedTemplate { get; set; }
     [JsonIgnore]  // key is stored in keystore.local.dat, not here
     public string? ElevenLabsApiKey { get; set; }
-    public string? ElevenLabsVoiceId { get; set; }
     public int HookPort { get; set; } = 47921;
-    public string BackgroundColor { get; set; } = "#000000";
-    public float VoiceStability { get; set; } = 0.5f;
-    public float VoiceSimilarity { get; set; } = 0.75f;
-    public float VoiceStyle { get; set; } = 0.0f;
-    public bool VoiceSpeakerBoost { get; set; } = true;
-    public List<CustomVoice> CustomVoices { get; set; } = new();
     public AiProvider SummaryProvider { get; set; } = AiProvider.Ollama;
     [JsonIgnore] public string? GeminiApiKey   { get; set; }
     [JsonIgnore] public string? OpenAiApiKey   { get; set; }

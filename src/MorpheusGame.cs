@@ -31,7 +31,9 @@ public class MorpheusGame : Game
     private readonly HookListener _listener = new();
     private readonly ConfigUi _ui = new();
     private MorpheusSettings _settings = new();
+    private ProjectConfig _project = new();
     private string _settingsPath = "";
+    private string _projectPath = "";
     private Texture2D? _avatarFrame;
     private Texture2D? _messageFrame;
     private Texture2D? _uiForwardTex;
@@ -44,7 +46,7 @@ public class MorpheusGame : Game
     private MouseState _prevMouse;
     private string? _currentTurnUuid;
     private int _spokenLen;
-    private readonly Queue<string> _speechQueue = new();
+    private readonly Queue<SpeechTask> _speechQueue = new();
     private bool _speechActive;
     private static readonly System.Text.RegularExpressions.Regex EmotionTagRegex =
         new(@"\[emotion:\s*(\w+)\s*\]",
@@ -93,8 +95,8 @@ public class MorpheusGame : Game
         ("pink",   new Color(255,  60, 200), 0.88f),
         ("white",  new Color(220, 230, 255), 0.62f),
     };
-    private Color ActiveTint    => Palette[Math.Abs(_layout.ColorIndex) % Palette.Length].Tint;
-    private float ActiveVortexHue => Palette[Math.Abs(_layout.ColorIndex) % Palette.Length].VortexHue;
+    private Color ActiveTint    => Palette[Math.Abs(_project.ColorIndex) % Palette.Length].Tint;
+    private float ActiveVortexHue => Palette[Math.Abs(_project.ColorIndex) % Palette.Length].VortexHue;
 
     // Per-panel layout rects (position + size, user-draggable/resizable)
     private Rectangle _voiceRect;
@@ -109,9 +111,7 @@ public class MorpheusGame : Game
     private Point _panelDragStartMouse;
     private Rectangle _panelDragStartRect;
 
-    // Layout persistence
-    private string _layoutPath = "";
-    private LayoutConfig _layout = new();
+    // Layout persistence (now part of ProjectConfig / morpheus.cfg in working dir)
 
     // API key panel (F4)
     private readonly ApiKeyPanel _apiKeyPanel = new();
@@ -162,10 +162,23 @@ public class MorpheusGame : Game
     protected override void Initialize()
     {
         AppLogger.Initialize(AppContext.BaseDirectory);
-        _settingsPath       = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
-        _keystorePath       = Path.Combine(AppContext.BaseDirectory, "keystore.local.dat");
+        _settingsPath = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
+        _keystorePath = Path.Combine(AppContext.BaseDirectory, "keystore.local.dat");
         _settings = SettingsStore.Load(_settingsPath);
-        _bg = ParseColor(_settings.BackgroundColor) ?? Color.Black;
+
+        // Per-project config lives in the working directory (where Morpheus was launched from)
+        _projectPath = Path.Combine(Environment.CurrentDirectory, "morpheus.cfg");
+        _project = ProjectConfigStore.Load(_projectPath);
+
+        // One-time migration: if morpheus.cfg doesn't exist yet, pull per-project fields
+        // from the old settings.local.json + layout.local.json so the user keeps their config.
+        if (!File.Exists(_projectPath))
+        {
+            MigrateLegacyToProject();
+            ProjectConfigStore.Save(_projectPath, _project);
+        }
+
+        _bg = ParseColor(_project.BackgroundColor) ?? Color.Black;
 
         // Load ElevenLabs key; migrate from old settings.local.json if needed.
         var storedKey = SecureKeyStore.Load(_keystorePath);
@@ -196,17 +209,15 @@ public class MorpheusGame : Game
         // Detect Ollama model at startup (fire and forget).
         _ = DetectOllamaModelAsync();
 
-        _layoutPath = Path.Combine(AppContext.BaseDirectory, "layout.local.json");
-        _layout = LayoutStore.Load(_layoutPath);
-        if (_layout.WindowWidth > 0 && _layout.WindowHeight > 0)
+        if (_project.WindowWidth > 0 && _project.WindowHeight > 0)
         {
-            _graphics.PreferredBackBufferWidth  = _layout.WindowWidth;
-            _graphics.PreferredBackBufferHeight = _layout.WindowHeight;
+            _graphics.PreferredBackBufferWidth  = _project.WindowWidth;
+            _graphics.PreferredBackBufferHeight = _project.WindowHeight;
             _graphics.ApplyChanges();
         }
-        _avatarOffsetX = _layout.AvatarOffsetX;
-        _avatarOffsetY = _layout.AvatarOffsetY;
-        if (_layout.AvatarSize > 0) _avatarSizeOverride = _layout.AvatarSize;
+        _avatarOffsetX = _project.AvatarOffsetX;
+        _avatarOffsetY = _project.AvatarOffsetY;
+        if (_project.AvatarSize > 0) _avatarSizeOverride = _project.AvatarSize;
 
         _liveSession = SessionStore.CreateNew();
         _viewSession = _liveSession;
@@ -226,7 +237,9 @@ public class MorpheusGame : Game
             StartNextSpeech();
         });
 
-        _ = _listener.StartAsync(_settings.HookPort);
+        _listener.FilterCwd = Environment.CurrentDirectory;
+        int hookPort = _project.HookPort ?? _settings.HookPort;
+        _ = _listener.StartAsync(hookPort);
 
         Exiting += OnWindowExiting;
         base.Initialize();
@@ -240,13 +253,13 @@ public class MorpheusGame : Game
         _bgRenderer.LoadContent(GraphicsDevice);
         _pixel.SetData(new[] { Color.White });
 
-        // Initialize panel rects — use saved layout if present, else viewport-relative defaults
+        // Initialize panel rects — use saved project config if present, else viewport-relative defaults
         var vp0 = GraphicsDevice.Viewport.Bounds;
-        bool hasLayout = File.Exists(_layoutPath);
-        _voiceRect        = hasLayout ? _layout.Voice.ToRect()        : new Rectangle(10, 140, 290, 270);
-        _sessionsRect     = hasLayout ? _layout.Sessions.ToRect()     : new Rectangle(vp0.Width - 300, 140, 290, 110);
-        _voicesExtraRect  = hasLayout ? _layout.VoicesExtra.ToRect()  : new Rectangle(vp0.Width - 290, 270, 270, 165);
-        _messagesRect     = hasLayout ? _layout.Messages.ToRect()     : new Rectangle(40, vp0.Height - 220, vp0.Width - 80, 180);
+        bool hasLayout = File.Exists(_projectPath);
+        _voiceRect        = hasLayout ? _project.Voice.ToRect()       : new Rectangle(10, 140, 290, 270);
+        _sessionsRect     = hasLayout ? _project.Sessions.ToRect()    : new Rectangle(vp0.Width - 300, 140, 290, 110);
+        _voicesExtraRect  = hasLayout ? _project.VoicesExtra.ToRect() : new Rectangle(vp0.Width - 290, 270, 270, 165);
+        _messagesRect     = hasLayout ? _project.Messages.ToRect()    : new Rectangle(40, vp0.Height - 220, vp0.Width - 80, 180);
 
         var avatarsRoot = Path.Combine(AppContext.BaseDirectory, "avatars");
         var templatesRoot = Path.Combine(AppContext.BaseDirectory, "templates");
@@ -254,13 +267,13 @@ public class MorpheusGame : Game
         var templates = TemplateLoader.Discover(templatesRoot);
         _ui.Templates = Map(templates, t => t.FolderName);
 
-        if (_settings.SelectedAvatar is { } savedAv)
+        if (_project.SelectedAvatar is { } savedAv)
         {
             for (int i = 0; i < _ui.Avatars.Count; i++)
                 if (string.Equals(_ui.Avatars[i].FolderName, savedAv, StringComparison.OrdinalIgnoreCase))
                 { _ui.AvatarIndex = i; break; }
         }
-        if (_settings.SelectedTemplate is { } savedTpl)
+        if (_project.SelectedTemplate is { } savedTpl)
         {
             for (int i = 0; i < templates.Count; i++)
                 if (string.Equals(templates[i].FolderName, savedTpl, StringComparison.OrdinalIgnoreCase))
@@ -268,23 +281,20 @@ public class MorpheusGame : Game
         }
 
         ApplyAvatar();
-        _avatarOffsetX = _layout.AvatarOffsetX;
-        _avatarOffsetY = _layout.AvatarOffsetY;
-        if (_layout.AvatarSize > 0) _avatarSizeOverride = _layout.AvatarSize;
         ApplyTemplate(templates);
 
-        _voicePanel.BindFromSettings(_settings);
+        _voicePanel.BindFromSettings(_project);
         ApplyAccentColor();
         _voicePanel.Save.Clicked += () =>
         {
-            _voicePanel.WriteToSettings(_settings);
-            SaveSettings();
+            _voicePanel.WriteToSettings(_project);
+            SaveProjectConfig();
             _ui.StatusLine = "voice settings saved";
         };
         _voicePanel.Preview.Clicked += () =>
         {
-            _voicePanel.WriteToSettings(_settings);
-            SaveSettings();
+            _voicePanel.WriteToSettings(_project);
+            SaveProjectConfig();
             TestSpeak();
         };
         _voicePanel.Reset.Clicked += () =>
@@ -296,8 +306,8 @@ public class MorpheusGame : Game
         };
         _voicePanel.Voice.Changed += id =>
         {
-            _settings.ElevenLabsVoiceId = id;
-            SaveSettings();
+            _project.ElevenLabsVoiceId = id;
+            SaveProjectConfig();
         };
 
         _sessionsDropdown.Changed += id => SelectSession(id);
@@ -334,10 +344,10 @@ public class MorpheusGame : Game
             if (string.IsNullOrEmpty(id)) { _ui.StatusLine = "voice id required"; return; }
             if (string.IsNullOrEmpty(name)) name = id[..Math.Min(8, id.Length)];
             // Replace existing custom with the same id (so re-naming works).
-            _settings.CustomVoices.RemoveAll(v => string.Equals(v.VoiceId, id, StringComparison.OrdinalIgnoreCase));
-            _settings.CustomVoices.Add(new CustomVoice { Name = name, VoiceId = id });
-            _settings.ElevenLabsVoiceId = id;
-            SaveSettings();
+            _project.CustomVoices.RemoveAll(v => string.Equals(v.VoiceId, id, StringComparison.OrdinalIgnoreCase));
+            _project.CustomVoices.Add(new CustomVoice { Name = name, VoiceId = id });
+            _project.ElevenLabsVoiceId = id;
+            SaveProjectConfig();
             _voicesExtra.CustomName.Text = "";
             _voicesExtra.CustomId.Text = "";
             RebuildVoiceDropdown();
@@ -358,10 +368,10 @@ public class MorpheusGame : Game
             var id = _voicesExtra.SharedResults.SelectedId;
             if (string.IsNullOrEmpty(id)) { _ui.StatusLine = "no shared voice selected"; return; }
             var name = _voicesExtra.SharedResults.SelectedDisplay;
-            _settings.CustomVoices.RemoveAll(v => string.Equals(v.VoiceId, id, StringComparison.OrdinalIgnoreCase));
-            _settings.CustomVoices.Add(new CustomVoice { Name = $"shared: {name}", VoiceId = id });
-            _settings.ElevenLabsVoiceId = id;
-            SaveSettings();
+            _project.CustomVoices.RemoveAll(v => string.Equals(v.VoiceId, id, StringComparison.OrdinalIgnoreCase));
+            _project.CustomVoices.Add(new CustomVoice { Name = $"shared: {name}", VoiceId = id });
+            _project.ElevenLabsVoiceId = id;
+            SaveProjectConfig();
             RebuildVoiceDropdown();
             _ui.StatusLine = $"using shared voice {name}";
         };
@@ -454,9 +464,9 @@ public class MorpheusGame : Game
     private void RebuildVoiceDropdown()
     {
         var merged = new List<VoiceInfo>(_libraryVoices);
-        foreach (var c in _settings.CustomVoices)
+        foreach (var c in _project.CustomVoices)
             merged.Add(new VoiceInfo(c.VoiceId, c.Name + "  [custom]", "custom", null));
-        _voicePanel.PopulateVoices(merged, _settings.ElevenLabsVoiceId);
+        _voicePanel.PopulateVoices(merged, _project.ElevenLabsVoiceId);
     }
 
     private async System.Threading.Tasks.Task SearchSharedAsync(string query)
@@ -536,8 +546,8 @@ public class MorpheusGame : Game
         if (!inputFocused)
         {
             if (Pressed(k, Keys.F1)) InstallHooksForCwd();
-            if (Pressed(k, Keys.F2)) { _ui.CycleAvatar(+1); ApplyAvatar(); SaveSettings(); }
-            if (Pressed(k, Keys.F3)) { _ui.CycleTemplate(+1); ApplyTemplate(TemplateLoader.Discover(Path.Combine(AppContext.BaseDirectory, "templates"))); SaveSettings(); }
+            if (Pressed(k, Keys.F2)) { _ui.CycleAvatar(+1); ApplyAvatar(); SaveProjectConfig(); }
+            if (Pressed(k, Keys.F3)) { _ui.CycleTemplate(+1); ApplyTemplate(TemplateLoader.Discover(Path.Combine(AppContext.BaseDirectory, "templates"))); SaveProjectConfig(); }
             if (Pressed(k, Keys.F4)) { _showApiKeyPanel = !_showApiKeyPanel; if (_showApiKeyPanel) { var vp2 = GraphicsDevice.Viewport; _apiKeyPanel.Layout(vp2.Width / 2, vp2.Height / 2); _apiKeyPanel.AccentColor = ActiveTint; _apiKeyPanel.KeyInput.Text = _settings.ElevenLabsApiKey ?? ""; _apiKeyPanel.SelectedProvider = _settings.SummaryProvider; _apiKeyPanel.OllamaModelLabel = _ollamaModel; _apiKeyPanel.KeyInput2.Text = KeyForProvider(_settings.SummaryProvider); _apiKeyPanel.Reset(); } }
             if (Pressed(k, Keys.F5)) TestSpeak();
             if (Pressed(k, Keys.F6)) InstallActivePersonality();
@@ -953,47 +963,28 @@ public class MorpheusGame : Game
 
         _ui.StatusLine = "speaking…";
 
-        // Queue speech segments with emotion changes
+        // Queue speech segments — emotion is applied when each chunk starts playing, not now
         int currentPos = 0;
         foreach (var segment in segments)
         {
-            // Only queue text that's new (after _spokenLen position)
             if (currentPos >= chunkStartPos)
             {
-                if (segment.Emotion is not null)
-                {
-                    _avatarState.Emotion = segment.Emotion;
-                    if (segment.Emotion != _lastSoundEmotion)
-                    {
-                        PlayTemplateSound(segment.Emotion);
-                        _lastSoundEmotion = segment.Emotion;
-                    }
-                }
                 if (!string.IsNullOrEmpty(segment.Text))
-                    EnqueueSpeech(segment.Text);
+                    EnqueueSpeech(segment.Text, segment.Emotion);
             }
             else if (currentPos + segment.Text.Length > chunkStartPos)
             {
-                // Partial segment — only queue the new part
                 int skipChars = chunkStartPos - currentPos;
                 var newPart = segment.Text[skipChars..];
-                if (segment.Emotion is not null)
-                {
-                    _avatarState.Emotion = segment.Emotion;
-                    if (segment.Emotion != _lastSoundEmotion)
-                    {
-                        PlayTemplateSound(segment.Emotion);
-                        _lastSoundEmotion = segment.Emotion;
-                    }
-                }
                 if (!string.IsNullOrEmpty(newPart))
-                    EnqueueSpeech(newPart);
+                    EnqueueSpeech(newPart, segment.Emotion);
             }
             currentPos += segment.Text.Length;
         }
     }
 
     private record EmotionSegment(string? Emotion, string Text);
+    private record SpeechTask(string Text, string? Emotion);
 
     private List<EmotionSegment> ParseEmotionSegments(string text)
     {
@@ -1006,7 +997,6 @@ public class MorpheusGame : Game
 
         foreach (System.Text.RegularExpressions.Match match in EmotionTagRegex.Matches(text))
         {
-            // Add text before this tag (if any) with current emotion
             if (match.Index > lastPos)
             {
                 var textBefore = text[lastPos..match.Index];
@@ -1014,18 +1004,11 @@ public class MorpheusGame : Game
                     segments.Add(new EmotionSegment(currentEmotion, textBefore));
             }
 
-            // Validate and set new emotion
-            var emotion = match.Groups[1].Value.ToLowerInvariant();
-            var availableEmotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions;
-            if (emotion == "idle" || (availableEmotions is not null && availableEmotions.ContainsKey(emotion)))
-            {
-                currentEmotion = emotion;
-            }
-
+            // Accept any emotion tag the LLM produces — avatar renderer falls back to idle for unknowns
+            currentEmotion = match.Groups[1].Value.ToLowerInvariant();
             lastPos = match.Index + match.Length;
         }
 
-        // Add remaining text after last tag
         if (lastPos < text.Length)
         {
             var textRemaining = text[lastPos..];
@@ -1033,34 +1016,45 @@ public class MorpheusGame : Game
                 segments.Add(new EmotionSegment(currentEmotion, textRemaining));
         }
 
+        // If no emotion tag was found in the text, inject a random available emotion at the start
+        if (currentEmotion is null && segments.Count > 0)
+        {
+            var emotions = _ui.SelectedAvatar?.Manifest.Sprites.Emotions;
+            if (emotions is { Count: > 0 })
+            {
+                var keys = new List<string>(emotions.Keys);
+                var picked = keys[_rng.Next(keys.Count)];
+                segments[0] = new EmotionSegment(picked, segments[0].Text);
+            }
+        }
+
         return segments;
     }
 
-    private void EnqueueSpeech(string text)
+    // emotion is applied to the avatar when this chunk *starts* playing (deferred, not immediate).
+    // Only the first chunk of a split gets the emotion; subsequent chunks get null (emotion persists).
+    private void EnqueueSpeech(string text, string? emotion = null)
     {
         if (string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)
-            || string.IsNullOrWhiteSpace(_settings.ElevenLabsVoiceId))
+            || string.IsNullOrWhiteSpace(_project.ElevenLabsVoiceId))
             return;
 
-        const int hardCap = 4980; // ElevenLabs per-request limit is 5000, leave 20 char buffer
+        const int hardCap = 4980;
         if (text.Length > hardCap)
         {
-            // Try to break at a sentence boundary before the limit
             int breakPoint = hardCap;
             int lastPeriod = text.LastIndexOf('.', Math.Min(hardCap - 1, text.Length - 1));
             if (lastPeriod > hardCap * 0.75) breakPoint = lastPeriod + 1;
 
-            var chunk = text[..breakPoint].TrimEnd();
-            _speechQueue.Enqueue(chunk);
+            _speechQueue.Enqueue(new SpeechTask(text[..breakPoint].TrimEnd(), emotion));
 
-            // Queue remainder for next cycle if there's more
             var remainder = text[breakPoint..].TrimStart();
             if (!string.IsNullOrEmpty(remainder))
-                _speechQueue.Enqueue(remainder);
+                _speechQueue.Enqueue(new SpeechTask(remainder, null));
         }
         else
         {
-            _speechQueue.Enqueue(text);
+            _speechQueue.Enqueue(new SpeechTask(text, emotion));
         }
 
         if (!_speechActive) StartNextSpeech();
@@ -1075,9 +1069,21 @@ public class MorpheusGame : Game
             return;
         }
         var next = _speechQueue.Dequeue();
+
+        // Apply emotion change at playback time, not at enqueue time
+        if (next.Emotion is not null)
+        {
+            _avatarState.Emotion = next.Emotion;
+            if (next.Emotion != _lastSoundEmotion)
+            {
+                PlayTemplateSound(next.Emotion);
+                _lastSoundEmotion = next.Emotion;
+            }
+        }
+
         if (!_speechActive) PlayTemplateSound("speak_start");
         _speechActive = true;
-        _ = SynthesizeAndPlayAsync(next);
+        _ = SynthesizeAndPlayAsync(next.Text);
     }
 
     private async System.Threading.Tasks.Task SynthesizeAndPlayAsync(string text)
@@ -1086,14 +1092,14 @@ public class MorpheusGame : Game
         {
             var voiceSettings = new VoiceSettings
             {
-                Stability = _settings.VoiceStability,
-                SimilarityBoost = _settings.VoiceSimilarity,
-                Style = _settings.VoiceStyle,
-                UseSpeakerBoost = _settings.VoiceSpeakerBoost,
+                Stability = _project.VoiceStability,
+                SimilarityBoost = _project.VoiceSimilarity,
+                Style = _project.VoiceStyle,
+                UseSpeakerBoost = _project.VoiceSpeakerBoost,
             };
             var tts = new ElevenLabsTts(_settings.ElevenLabsApiKey!, voiceSettings);
             // Prepend a soft pause to prevent ElevenLabs from clipping the first word
-            var mp3 = await tts.SynthesizeAsync("… " + text, _settings.ElevenLabsVoiceId!);
+            var mp3 = await tts.SynthesizeAsync("… " + text, _project.ElevenLabsVoiceId!);
             _mainThread.Enqueue(() => { _lastMp3 = mp3; _player.PlayMp3(mp3); });
         }
         catch (Exception ex)
@@ -1188,21 +1194,10 @@ public class MorpheusGame : Game
                 _ui.StatusLine = "summary ready";
                 StopSpeech();
                 var segments    = ParseEmotionSegments(summary);
-                var summaryText = string.Concat(System.Linq.Enumerable.Select(segments, s => s.Text));
+                var summaryText = string.Concat(segments.Select(s => s.Text));
                 foreach (var seg in segments)
-                {
-                    if (seg.Emotion is not null)
-                    {
-                        _avatarState.Emotion = seg.Emotion;
-                        if (seg.Emotion != _lastSoundEmotion)
-                        {
-                            PlayTemplateSound(seg.Emotion);
-                            _lastSoundEmotion = seg.Emotion;
-                        }
-                    }
                     if (!string.IsNullOrEmpty(seg.Text))
-                        EnqueueSpeech(seg.Text);
-                }
+                        EnqueueSpeech(seg.Text, seg.Emotion);
                 if (!string.IsNullOrWhiteSpace(summaryText))
                     _messageView.SetSummaryForCurrentPage(summaryText);
             });
@@ -1248,8 +1243,8 @@ public class MorpheusGame : Game
         RefreshSessionsDropdown();
         _messageView.ResetAutoScroll();
 
-        if (emotion is not null) _avatarState.Emotion = emotion;
-        for (int i = 0; i < repeatCount; i++) EnqueueSpeech(text);
+        // First repetition carries the chosen emotion; the rest inherit it (null = keep current)
+        for (int i = 0; i < repeatCount; i++) EnqueueSpeech(text, i == 0 ? emotion : null);
     }
 
     private void RunCustomPrompt(string promptText, bool useClaudeContext)
@@ -1291,23 +1286,23 @@ public class MorpheusGame : Game
             };
 
             if (string.IsNullOrWhiteSpace(response)) response = "(no response)";
-            AppLogger.Log($"Custom prompt response: '{Truncate(response, 100)}'");
+            AppLogger.Log($"Custom prompt response (raw): '{Truncate(response, 200)}'");
 
             _mainThread.Enqueue(() =>
             {
-                var page = new Sessions.SessionPage { Uuid = Guid.NewGuid().ToString(), At = DateTime.UtcNow, Text = response! };
+                var segments  = ParseEmotionSegments(response!);
+                var cleanText = string.Concat(segments.Select(s => s.Text));
+
+                var page = new Sessions.SessionPage { Uuid = Guid.NewGuid().ToString(), At = DateTime.UtcNow, Text = cleanText };
                 _liveSession.Pages.Add(page);
                 Sessions.SessionStore.Save(_liveSession);
                 _messageView.SetPages(_liveSession.Pages, _liveSession.Pages.Count - 1);
                 RefreshSessionsDropdown();
                 _ui.StatusLine = "custom prompt complete";
 
-                var segments = ParseEmotionSegments(response!);
                 foreach (var seg in segments)
-                {
-                    if (seg.Emotion is not null) _avatarState.Emotion = seg.Emotion;
-                    if (!string.IsNullOrEmpty(seg.Text)) EnqueueSpeech(seg.Text);
-                }
+                    if (!string.IsNullOrEmpty(seg.Text))
+                        EnqueueSpeech(seg.Text, seg.Emotion);
             });
         }
         catch (Exception ex)
@@ -1364,7 +1359,7 @@ public class MorpheusGame : Game
     private void TestSpeak()
     {
         if (!string.IsNullOrWhiteSpace(_settings.ElevenLabsApiKey)
-            && !string.IsNullOrWhiteSpace(_settings.ElevenLabsVoiceId))
+            && !string.IsNullOrWhiteSpace(_project.ElevenLabsVoiceId))
         {
             const string line = "Morpheus online. Text to speech is wired.";
             _ui.StatusLine = "synthesizing test line…";
@@ -1382,7 +1377,7 @@ public class MorpheusGame : Game
         var cwd = Environment.CurrentDirectory;
         try
         {
-            HookInstaller.InstallToProject(cwd, _settings.HookPort);
+            HookInstaller.InstallToProject(cwd, _project.HookPort ?? _settings.HookPort);
             _ui.StatusLine = $"hooks installed to {cwd}\\.claude\\settings.json";
         }
         catch (Exception ex)
@@ -1470,7 +1465,7 @@ public class MorpheusGame : Game
         var av = _ui.SelectedAvatar;
         if (av is null) return;
         _avatarRenderer.LoadAvatar(av, GraphicsDevice);
-        _settings.SelectedAvatar = av.FolderName;
+        _project.SelectedAvatar = av.FolderName;
         _avatarOffsetX = 0;
         _avatarOffsetY = 0;
         _avatarSizeOverride = null;
@@ -1507,7 +1502,7 @@ public class MorpheusGame : Game
         if (templates.Count == 0) return;
         var tpl = templates[_ui.TemplateIndex % templates.Count];
         _activeTemplate = tpl;
-        _settings.SelectedTemplate = tpl.FolderName;
+        _project.SelectedTemplate = tpl.FolderName;
         _avatarFrame = LoadTex(Path.Combine(tpl.FolderPath, tpl.Manifest.AvatarFrame ?? ""));
         _messageFrame = LoadTex(Path.Combine(tpl.FolderPath, tpl.Manifest.MessageFrame ?? ""));
         _uiForwardTex  = LoadTex(Path.Combine(tpl.FolderPath, "uiforward.png"));
@@ -1524,6 +1519,50 @@ public class MorpheusGame : Game
     }
 
     private void SaveSettings() => SettingsStore.Save(_settingsPath, _settings);
+
+    private void SaveProjectConfig() => ProjectConfigStore.Save(_projectPath, _project);
+
+    // Pull per-project fields from old settings.local.json + layout.local.json created before
+    // morpheus.cfg existed. Called only when morpheus.cfg is missing on startup.
+    private void MigrateLegacyToProject()
+    {
+        // Migrate per-project fields from old settings.local.json
+        var oldSettingsPath = Path.Combine(AppContext.BaseDirectory, "settings.local.json");
+        if (File.Exists(oldSettingsPath))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(oldSettingsPath));
+                var r = doc.RootElement;
+                if (r.TryGetProperty("selectedAvatar",   out var av)   && av.ValueKind   == System.Text.Json.JsonValueKind.String) _project.SelectedAvatar   = av.GetString();
+                if (r.TryGetProperty("selectedTemplate", out var tpl)  && tpl.ValueKind  == System.Text.Json.JsonValueKind.String) _project.SelectedTemplate = tpl.GetString();
+                if (r.TryGetProperty("elevenLabsVoiceId", out var vid) && vid.ValueKind  == System.Text.Json.JsonValueKind.String) _project.ElevenLabsVoiceId = vid.GetString();
+                if (r.TryGetProperty("backgroundColor",  out var bgc)  && bgc.ValueKind  == System.Text.Json.JsonValueKind.String) _project.BackgroundColor  = bgc.GetString()!;
+                if (r.TryGetProperty("voiceStability",   out var vs)   && vs.ValueKind   == System.Text.Json.JsonValueKind.Number) _project.VoiceStability   = vs.GetSingle();
+                if (r.TryGetProperty("voiceSimilarity",  out var vsim) && vsim.ValueKind == System.Text.Json.JsonValueKind.Number) _project.VoiceSimilarity  = vsim.GetSingle();
+                if (r.TryGetProperty("voiceStyle",       out var vst)  && vst.ValueKind  == System.Text.Json.JsonValueKind.Number) _project.VoiceStyle       = vst.GetSingle();
+                if (r.TryGetProperty("voiceSpeakerBoost", out var vsb) && (vsb.ValueKind == System.Text.Json.JsonValueKind.True || vsb.ValueKind == System.Text.Json.JsonValueKind.False)) _project.VoiceSpeakerBoost = vsb.GetBoolean();
+            }
+            catch { }
+        }
+
+        // Migrate layout from old layout.local.json
+        var oldLayoutPath = Path.Combine(AppContext.BaseDirectory, "layout.local.json");
+        if (File.Exists(oldLayoutPath))
+        {
+            var old = LayoutStore.Load(oldLayoutPath);
+            _project.Voice       = old.Voice;
+            _project.Sessions    = old.Sessions;
+            _project.VoicesExtra = old.VoicesExtra;
+            _project.Messages    = old.Messages;
+            _project.AvatarOffsetX = old.AvatarOffsetX;
+            _project.AvatarOffsetY = old.AvatarOffsetY;
+            _project.AvatarSize    = old.AvatarSize;
+            _project.WindowWidth   = old.WindowWidth;
+            _project.WindowHeight  = old.WindowHeight;
+            _project.ColorIndex    = old.ColorIndex;
+        }
+    }
 
     private bool Pressed(KeyboardState k, Keys key) => k.IsKeyDown(key) && _prevKeys.IsKeyUp(key);
 
@@ -1756,20 +1795,20 @@ public class MorpheusGame : Game
 
     private void SaveLayout()
     {
-        _layout.Voice       = PanelLayout.From(_voiceRect);
-        _layout.Sessions    = PanelLayout.From(_sessionsRect);
-        _layout.VoicesExtra = PanelLayout.From(_voicesExtraRect);
-        _layout.Messages    = PanelLayout.From(_messagesRect);
-        _layout.AvatarOffsetX = _avatarOffsetX;
-        _layout.AvatarOffsetY = _avatarOffsetY;
-        _layout.AvatarSize    = _avatarSizeOverride ?? 0;
-        LayoutStore.Save(_layoutPath, _layout);
+        _project.Voice       = PanelLayout.From(_voiceRect);
+        _project.Sessions    = PanelLayout.From(_sessionsRect);
+        _project.VoicesExtra = PanelLayout.From(_voicesExtraRect);
+        _project.Messages    = PanelLayout.From(_messagesRect);
+        _project.AvatarOffsetX = _avatarOffsetX;
+        _project.AvatarOffsetY = _avatarOffsetY;
+        _project.AvatarSize    = _avatarSizeOverride ?? 0;
+        SaveProjectConfig();
     }
 
     private void OnWindowExiting(object? sender, EventArgs args)
     {
-        _layout.WindowWidth  = GraphicsDevice.Viewport.Width;
-        _layout.WindowHeight = GraphicsDevice.Viewport.Height;
+        _project.WindowWidth  = GraphicsDevice.Viewport.Width;
+        _project.WindowHeight = GraphicsDevice.Viewport.Height;
         SaveLayout();
     }
 
@@ -1785,9 +1824,9 @@ public class MorpheusGame : Game
 
     private void CycleColor()
     {
-        _layout.ColorIndex = (_layout.ColorIndex + 1) % Palette.Length;
+        _project.ColorIndex = (_project.ColorIndex + 1) % Palette.Length;
         ApplyAccentColor();
-        _ui.StatusLine = $"color: {Palette[_layout.ColorIndex].Name}";
+        _ui.StatusLine = $"color: {Palette[_project.ColorIndex].Name}";
         SaveLayout();
     }
 
