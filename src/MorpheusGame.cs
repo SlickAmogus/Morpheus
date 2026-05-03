@@ -236,7 +236,8 @@ public class MorpheusGame : Game
             _ui.BoundSessionId = sid;
             _ui.StatusLine = $"bound to session {Short(sid)}";
         });
-        _listener.OnPollTick += msg => _mainThread.Enqueue(() => _ui.StatusLine = msg);
+        _listener.OnPollTick    += msg => _mainThread.Enqueue(() => _ui.StatusLine = msg);
+        _listener.OnDiagnostic  += msg => _mainThread.Enqueue(() => { _ui.StatusLine = msg; AppLogger.Log($"[diag] {msg}"); });
         _player.Finished += () => _mainThread.Enqueue(() =>
         {
             _avatarState.MouthOpen = false;
@@ -551,7 +552,8 @@ public class MorpheusGame : Game
         }
         if (!inputFocused)
         {
-            if (Pressed(k, Keys.F1)) InstallHooksForCwd();
+            bool shiftHeld = k.IsKeyDown(Keys.LeftShift) || k.IsKeyDown(Keys.RightShift);
+            if (Pressed(k, Keys.F1)) { if (shiftHeld) ReinstallHooksForCwd(); else InstallHooksForCwd(); }
             if (Pressed(k, Keys.F2)) { _ui.CycleAvatar(+1); ApplyAvatar(); SaveProjectConfig(); }
             if (Pressed(k, Keys.F3)) { _ui.CycleTemplate(+1); ApplyTemplate(TemplateLoader.Discover(Path.Combine(AppContext.BaseDirectory, "templates"))); SaveProjectConfig(); }
             if (Pressed(k, Keys.F4)) { _showApiKeyPanel = !_showApiKeyPanel; if (_showApiKeyPanel) { var vp2 = GraphicsDevice.Viewport; _apiKeyPanel.Layout(vp2.Width / 2, vp2.Height / 2); _apiKeyPanel.AccentColor = ActiveTint; _apiKeyPanel.KeyInput.Text = _settings.ElevenLabsApiKey ?? ""; _apiKeyPanel.SelectedProvider = _settings.SummaryProvider; _apiKeyPanel.OllamaModelLabel = _ollamaModel; _apiKeyPanel.KeyInput2.Text = KeyForProvider(_settings.SummaryProvider); _apiKeyPanel.Reset(); } }
@@ -1436,11 +1438,28 @@ public class MorpheusGame : Game
         try
         {
             HookInstaller.InstallToProject(cwd, _project.HookPort ?? _settings.HookPort);
-            _ui.StatusLine = $"hooks installed to {cwd}\\.claude\\settings.json";
+            _ui.StatusLine = $"hooks installed → {cwd}\\.claude\\settings.json";
+            AppLogger.Log($"Hooks installed to {cwd}");
         }
         catch (Exception ex)
         {
             _ui.StatusLine = $"hook install failed: {ex.Message}";
+        }
+    }
+
+    private void ReinstallHooksForCwd()
+    {
+        var cwd = Environment.CurrentDirectory;
+        try
+        {
+            HookInstaller.UninstallFromProject(cwd);
+            HookInstaller.InstallToProject(cwd, _project.HookPort ?? _settings.HookPort);
+            _ui.StatusLine = $"hooks reinstalled (clean) → {cwd}\\.claude\\settings.json";
+            AppLogger.Log($"Hooks reinstalled (clean) to {cwd}");
+        }
+        catch (Exception ex)
+        {
+            _ui.StatusLine = $"hook reinstall failed: {ex.Message}";
         }
     }
 

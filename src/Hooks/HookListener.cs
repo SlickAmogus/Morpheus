@@ -24,8 +24,9 @@ public sealed class HookListener : IDisposable
 
     public event Action<StopHookEvent>? OnStop;
     public event Action<ToolHookEvent>? OnTool;
-    public event Action<string>? OnBindChanged; // fires when a new session locks on
-    public event Action<string>? OnPollTick;    // status message during polling
+    public event Action<string>? OnBindChanged;  // fires when a new session locks on
+    public event Action<string>? OnPollTick;     // status message during polling
+    public event Action<string>? OnDiagnostic;  // diagnostic / warning messages
 
     public Task StartAsync(int port, CancellationToken ct = default)
     {
@@ -232,12 +233,30 @@ public sealed class HookListener : IDisposable
     private bool LockOrIgnore(string? sessionId, string? cwd)
     {
         // CWD filter: ignore events from sessions in different directories
-        if (FilterCwd is not null && cwd is not null)
+        if (FilterCwd is not null)
         {
-            var normFilter = Path.GetFullPath(FilterCwd).TrimEnd('/', '\\', Path.DirectorySeparatorChar);
-            var normCwd    = Path.GetFullPath(cwd).TrimEnd('/', '\\', Path.DirectorySeparatorChar);
-            if (!string.Equals(normFilter, normCwd, StringComparison.OrdinalIgnoreCase))
-                return false;
+            if (cwd is null)
+            {
+                // Hook payload didn't include cwd — pass through (can't filter)
+                OnDiagnostic?.Invoke($"hook: cwd missing in payload, filter bypassed (filter={FilterCwd})");
+            }
+            else
+            {
+                try
+                {
+                    var normFilter = Path.GetFullPath(FilterCwd).TrimEnd(Path.DirectorySeparatorChar, '/');
+                    var normCwd    = Path.GetFullPath(cwd).TrimEnd(Path.DirectorySeparatorChar, '/');
+                    if (!string.Equals(normFilter, normCwd, StringComparison.OrdinalIgnoreCase))
+                    {
+                        OnDiagnostic?.Invoke($"hook cwd mismatch — got: {normCwd} | want: {normFilter}");
+                        return false;
+                    }
+                }
+                catch
+                {
+                    OnDiagnostic?.Invoke($"hook: cwd path error (got={cwd}, filter={FilterCwd})");
+                }
+            }
         }
 
         if (string.IsNullOrEmpty(sessionId)) return false;
