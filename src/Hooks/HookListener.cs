@@ -88,6 +88,8 @@ public sealed class HookListener : IDisposable
             using (var r = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
                 body = r.ReadToEnd();
 
+            AppLogger.Log($"[hook] {path} received");
+
             switch (path)
             {
                 case "/speak":      HandleSpeak(body); break;
@@ -103,6 +105,7 @@ public sealed class HookListener : IDisposable
         }
         catch (Exception ex)
         {
+            AppLogger.Log($"[hook] handler exception: {ex.Message}");
             try { Respond(ctx, 500, $"{{\"error\":{JsonEncodedText.Encode(ex.Message)}}}"); } catch { }
         }
     }
@@ -110,7 +113,8 @@ public sealed class HookListener : IDisposable
     private void HandleSpeak(string body)
     {
         var env = Parse(body);
-        if (env is null) return;
+        if (env is null) { AppLogger.Log("[hook] /speak: failed to parse body"); return; }
+        AppLogger.Log($"[hook] /speak sid={env.SessionId?[..Math.Min(8, env.SessionId?.Length ?? 0)]} cwd={env.Cwd}");
         if (!LockOrIgnore(env.SessionId, env.Cwd)) return;
 
         var sessionId = env.SessionId ?? "";
@@ -199,7 +203,8 @@ public sealed class HookListener : IDisposable
     private void HandleTool(string body, string phase)
     {
         var env = Parse(body);
-        if (env is null) return;
+        if (env is null) { AppLogger.Log($"[hook] /tool-{phase}: failed to parse body"); return; }
+        AppLogger.Log($"[hook] /tool-{phase} tool={env.ToolName} sid={env.SessionId?[..Math.Min(8, env.SessionId?.Length ?? 0)]} cwd={env.Cwd}");
         if (!LockOrIgnore(env.SessionId, env.Cwd)) return;
 
         OnTool?.Invoke(new ToolHookEvent
@@ -259,28 +264,30 @@ public sealed class HookListener : IDisposable
             }
         }
 
-        if (string.IsNullOrEmpty(sessionId)) return false;
+        if (string.IsNullOrEmpty(sessionId)) { AppLogger.Log("[hook] LockOrIgnore: empty sessionId, ignored"); return false; }
 
         _lastActivityTime = DateTime.UtcNow;
 
         if (BoundSessionId is null)
         {
             BoundSessionId = sessionId;
+            AppLogger.Log($"[hook] bound to new session {sessionId[..Math.Min(8, sessionId.Length)]}");
             OnBindChanged?.Invoke(sessionId);
             return true;
         }
 
-        // Check if bound session has timed out — allow rebinding to new session
         if (BoundSessionId != sessionId)
         {
             var timeSinceLastActivity = (DateTime.UtcNow - _lastActivityTime).TotalSeconds;
             if (timeSinceLastActivity > SessionTimeoutSeconds)
             {
+                AppLogger.Log($"[hook] session timed out, rebinding {sessionId[..Math.Min(8, sessionId.Length)]}");
                 BoundSessionId = sessionId;
                 OnBindChanged?.Invoke(sessionId);
                 return true;
             }
-            return false; // still bound to old session
+            AppLogger.Log($"[hook] ignored — bound to {BoundSessionId[..Math.Min(8, BoundSessionId.Length)]}, got {sessionId[..Math.Min(8, sessionId.Length)]}");
+            return false;
         }
 
         return true; // same session
